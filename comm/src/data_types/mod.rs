@@ -25,3 +25,61 @@ pub mod packet;
 pub mod request;
 pub mod request_response_impl;
 pub mod response;
+use ciborium::Value;
+use coset::{AsCborValue, CborSerializable, CoseError};
+use zeroize::ZeroizeOnDrop;
+use CoseError::UnexpectedItem;
+
+/// Size of the `id` bstr in SecretManagement.cddl
+pub const ID_SIZE: usize = 64;
+/// Size of the `secret` bstr in SecretManagement.cddl
+pub const SECRET_SIZE: usize = 32;
+
+/// Identifier of Secret. See `id` in SecretManagement.cddl
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Id(pub [u8; ID_SIZE]);
+
+impl AsCborValue for Id {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        Ok(Self(
+            value
+                .into_bytes()
+                .map_err(|_| UnexpectedItem("-", "Bytes"))?
+                .try_into()
+                .map_err(|_| UnexpectedItem("Bytes", "64 Bytes"))?,
+        ))
+    }
+
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        Ok(Value::Bytes(self.0.to_vec()))
+    }
+}
+
+impl CborSerializable for Id {}
+
+/// Secret - corresponds to `secret` in SecretManagement.cddl
+#[derive(Clone, Eq, PartialEq, ZeroizeOnDrop)]
+pub struct Secret(pub [u8; SECRET_SIZE]);
+impl AsCborValue for Secret {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        Ok(Self(
+            value
+                .into_bytes()
+                .map_err(|_| UnexpectedItem("-", "Bytes"))?
+                .try_into()
+                .map_err(|_| UnexpectedItem("Bytes", "32 Bytes"))?,
+        ))
+    }
+
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        Ok(Value::Bytes(self.0.to_vec()))
+    }
+}
+
+impl CborSerializable for Secret {}
+
+impl core::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Sensitive information omitted")
+    }
+}
