@@ -16,6 +16,7 @@
 
 //! Implementation of a SecretKeeper trusted application (TA).
 
+use crate::store::{KeyValueStore, PolicyGatedStorage};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -44,7 +45,7 @@ const CURRENT_VERSION: u64 = 1;
 /// Maximum number of live session keys.
 const MAX_SESSIONS: usize = 32;
 
-/// AuthGraph trusted application instance.
+/// Secretkeeper trusted application instance.
 pub struct SecretkeeperTa {
     /// AES-GCM implementation.
     aes_gcm: Box<dyn AesGcm>,
@@ -64,11 +65,17 @@ pub struct SecretkeeperTa {
 
     /// Current session keys.
     session_keys: VecDeque<SessionKeyInfo>,
+
+    /// Storage of secrets (& sealing policy)
+    _store: PolicyGatedStorage,
 }
 
 impl SecretkeeperTa {
     /// Create a TA instance using the provided trait implementations.
-    pub fn new(ag_impls: &mut CryptoTraitImpl) -> Result<Self, SkInternalError> {
+    pub fn new(
+        ag_impls: &mut CryptoTraitImpl,
+        storage_impl: Box<dyn KeyValueStore>,
+    ) -> Result<Self, SkInternalError> {
         // Create a per-boot-key for AuthGraph to use.
         let aes_gcm = ag_impls.aes_gcm.box_clone();
         let rng = ag_impls.rng.box_clone();
@@ -93,6 +100,7 @@ impl SecretkeeperTa {
             },
             policy: None,
         };
+        let store = PolicyGatedStorage::init(storage_impl);
 
         Ok(Self {
             aes_gcm,
@@ -101,6 +109,7 @@ impl SecretkeeperTa {
             identity_sign_key: Some(identity_sign_key),
             identity: Some(identity),
             session_keys: VecDeque::new(),
+            _store: store,
         })
     }
 
