@@ -34,7 +34,7 @@ use authgraph_core::key::{
 };
 use authgraph_core::traits::{AesGcm, CryptoTraitImpl, Device, EcDsa, Rng, Sha256};
 use authgraph_wire::{ErrorCode, SESSION_ID_LEN};
-use coset::iana;
+use coset::{iana, CborSerializable};
 use log::{error, warn};
 
 /// Current Secretkeeper version.
@@ -111,13 +111,13 @@ impl SecretkeeperTa {
             // SecretkeeperError is also a valid 'Response', serialize to a response packet.
             |sk_err| {
                 Response::serialize_to_packet(&sk_err)
-                    .into_bytes()
+                    .to_vec()
                     .expect("Panicking due to serialization failing")
             },
         )
     }
     fn process_inner(&self, req: &[u8]) -> Result<Vec<u8>, SecretkeeperError> {
-        let req_packet = RequestPacket::from_bytes(req).map_err(|e| {
+        let req_packet = RequestPacket::from_slice(req).map_err(|e| {
             error!("Failed to get Request packet from bytes: {e:?}");
             SecretkeeperError::RequestMalformed
         })?;
@@ -127,7 +127,7 @@ impl SecretkeeperTa {
                 _ => todo!("TODO(b/291224769): Unimplemented operations"),
             };
 
-        rsp_packet.into_bytes().map_err(|_| SecretkeeperError::UnexpectedServerError)
+        rsp_packet.to_vec().map_err(|_| SecretkeeperError::UnexpectedServerError)
     }
 
     fn get_version(req: RequestPacket) -> Result<ResponsePacket, SecretkeeperError> {
