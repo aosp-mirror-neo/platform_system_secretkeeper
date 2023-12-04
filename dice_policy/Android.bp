@@ -8,14 +8,13 @@ rust_defaults {
     defaults: ["avf_build_flags_rust"],
     srcs: ["src/lib.rs"],
     edition: "2021",
+    lints: "android",
     prefer_rlib: true,
     rustlibs: [
-        "libanyhow",
         "libciborium",
         "libcoset",
-        "libnum_traits",
     ],
-    proc_macros: ["libnum_derive"],
+    proc_macros: ["libenumn"],
 }
 
 rust_library {
