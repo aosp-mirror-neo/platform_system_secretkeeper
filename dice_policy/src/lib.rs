@@ -57,20 +57,22 @@
 //!
 //! value = bool / int / tstr / bstr
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+#![allow(missing_docs)] // Sadly needed due to use of enumn::N
+
 use ciborium::Value;
 use coset::{AsCborValue, CoseSign1};
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
+use enumn::N;
 use std::borrow::Cow;
 use std::iter::zip;
+
+type Error = String;
 
 const DICE_POLICY_VERSION: u64 = 1;
 
 /// Constraint Types supported in Dice policy.
 #[repr(u16)]
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, N)]
 pub enum ConstraintType {
     /// Enforce exact match criteria, indicating the policy should match
     /// if the dice chain has exact same specified values.
@@ -92,7 +94,7 @@ pub struct ConstraintSpec {
 
 impl ConstraintSpec {
     /// Construct the ConstraintSpec.
-    pub fn new(constraint_type: ConstraintType, path: Vec<i64>) -> Result<Self> {
+    pub fn new(constraint_type: ConstraintType, path: Vec<i64>) -> Result<Self, Error> {
         Ok(ConstraintSpec { constraint_type, path })
     }
 }
@@ -122,7 +124,7 @@ impl DicePolicy {
     ///
     /// # Arguments
     /// `dice_chain`: The serialized CBOR encoded Dice chain, adhering to Android Profile for DICE.
-    /// https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md
+    /// <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
     ///
     /// `constraint_spec`: List of constraints to be applied on dice node.
     /// Each constraint is a ConstraintSpec object.
@@ -144,7 +146,10 @@ impl DicePolicy {
     ///     ConstraintSpec(ConstraintType::ExactMatch, vec![1]),         // exact_matches value 'a'
     ///     ConstraintSpec(ConstraintType::GreaterOrEqual, vec![2, 200]),// matches any value >= 5
     ///    ];
-    pub fn from_dice_chain(dice_chain: &[u8], constraint_spec: &[ConstraintSpec]) -> Result<Self> {
+    pub fn from_dice_chain(
+        dice_chain: &[u8],
+        constraint_spec: &[ConstraintSpec],
+    ) -> Result<Self, Error> {
         let dice_chain = deserialize_dice_chain(dice_chain)?;
         let mut constraints_list: Vec<NodeConstraints> = Vec::with_capacity(dice_chain.len());
         let mut it = dice_chain.into_iter();
@@ -157,7 +162,7 @@ impl DicePolicy {
 
         for (n, value) in it.enumerate() {
             let entry = cbor_value_from_cose_sign(value)
-                .with_context(|| format!("Unable to get Cose payload at: {}", n))?;
+                .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?;
             constraints_list.push(payload_to_constraints(entry, constraint_spec)?);
         }
 
@@ -171,16 +176,15 @@ impl DicePolicy {
     /// The method returns Ok() if the dice chain meets the constraints set in Dice policy,
     /// otherwise returns error in case of mismatch.
     /// TODO(b/291238565) Create a separate error module for DicePolicy mismatches.
-    pub fn matches_dice_chain(&self, dice_chain: &[u8]) -> Result<()> {
+    pub fn matches_dice_chain(&self, dice_chain: &[u8]) -> Result<(), Error> {
         let dice_chain = deserialize_dice_chain(dice_chain)?;
-        ensure!(
-            dice_chain.len() == self.node_constraints_list.len(),
-            format!(
+        if dice_chain.len() != self.node_constraints_list.len() {
+            return Err(format!(
                 "Dice chain size({}) does not match policy({})",
                 dice_chain.len(),
                 self.node_constraints_list.len()
-            )
-        );
+            ));
+        }
 
         for (n, (dice_node, node_constraints)) in
             zip(dice_chain, self.node_constraints_list.iter()).enumerate()
@@ -189,35 +193,48 @@ impl DicePolicy {
                 dice_node
             } else {
                 cbor_value_from_cose_sign(dice_node)
-                    .with_context(|| format!("Unable to get Cose payload at: {}", n))?
+                    .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?
             };
             check_constraints_on_node(node_constraints, &dice_node_payload)
-                .context(format!("Mismatch found at {}", n))?;
+                .map_err(|e| format!("Mismatch found at {n}: {e:?}"))?;
         }
         Ok(())
     }
 }
 
-fn check_constraints_on_node(node_constraints: &NodeConstraints, dice_node: &Value) -> Result<()> {
+fn check_constraints_on_node(
+    node_constraints: &NodeConstraints,
+    dice_node: &Value,
+) -> Result<(), Error> {
     for constraint in node_constraints.0.iter() {
         check_constraint_on_node(constraint, dice_node)?;
     }
     Ok(())
 }
 
-fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Result<()> {
+fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Result<(), Error> {
     let Constraint(cons_type, path, value_in_constraint) = constraint;
     let value_in_node = lookup_value_in_nested_map(dice_node, path)?;
-    match ConstraintType::from_u16(*cons_type).ok_or(anyhow!("Unexpected Constraint type"))? {
-        ConstraintType::ExactMatch => ensure!(value_in_node == *value_in_constraint),
+    match ConstraintType::n(*cons_type).ok_or("Unexpected Constraint type")? {
+        ConstraintType::ExactMatch => {
+            if value_in_node != *value_in_constraint {
+                return Err(format!(
+                    "Policy mismatch. Expected {value_in_constraint:?}; found {value_in_node:?}"
+                ));
+            }
+        }
         ConstraintType::GreaterOrEqual => {
             let value_in_node = value_in_node
                 .as_integer()
-                .ok_or(anyhow!("Mismatch type: expected a CBOR integer"))?;
+                .ok_or("Mismatch type: expected a CBOR integer".to_string())?;
             let value_min = value_in_constraint
                 .as_integer()
-                .ok_or(anyhow!("Mismatch type: expected a CBOR integer"))?;
-            ensure!(value_in_node >= value_min);
+                .ok_or("Mismatch type: expected a CBOR integer".to_string())?;
+            if value_in_node < value_min {
+                return Err(format!(
+                    "Policy mismatch. Expected >= {value_min:?}; found {value_in_node:?}"
+                ));
+            }
         }
     };
     Ok(())
@@ -227,15 +244,16 @@ fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Resul
 fn payload_to_constraints(
     payload: Value,
     constraint_spec: &[ConstraintSpec],
-) -> Result<NodeConstraints> {
+) -> Result<NodeConstraints, Error> {
     let mut node_constraints: Vec<Constraint> = Vec::with_capacity(constraint_spec.len());
     for constraint_item in constraint_spec {
         let constraint_path = constraint_item.path.to_vec();
         if constraint_path.is_empty() {
-            bail!("Expected non-empty key spec");
+            return Err("Expected non-empty key spec".to_string());
         }
-        let val = lookup_value_in_nested_map(&payload, &constraint_path)
-            .context(format!("Value not found for constraint_path {:?}", constraint_path))?;
+        let val = lookup_value_in_nested_map(&payload, &constraint_path).map_err(|e| {
+            format!("Value not found for constraint_path {constraint_path:?}: {e:?}")
+        })?;
         let constraint = Constraint(constraint_item.constraint_type as u16, constraint_path, val);
         node_constraints.push(constraint);
     }
@@ -245,24 +263,24 @@ fn payload_to_constraints(
 // Lookup value corresponding to constraint path in nested map.
 // This function recursively calls itself.
 // The depth of recursion is limited by the size of constraint_path.
-fn lookup_value_in_nested_map(cbor_map: &Value, constraint_path: &[i64]) -> Result<Value> {
+fn lookup_value_in_nested_map(cbor_map: &Value, constraint_path: &[i64]) -> Result<Value, Error> {
     if constraint_path.is_empty() {
         return Ok(cbor_map.clone());
     }
     let explicit_map = get_map_from_value(cbor_map)?;
     let val = lookup_value_in_map(&explicit_map, constraint_path[0])
-        .ok_or(anyhow!("Value not found for constraint key: {:?}", constraint_path[0]))?;
+        .ok_or_else(|| format!("Value not found for constraint key: {:?}", constraint_path[0]))?;
     lookup_value_in_nested_map(val, &constraint_path[1..])
 }
 
-fn get_map_from_value(cbor_map: &Value) -> Result<Cow<Vec<(Value, Value)>>> {
+fn get_map_from_value(cbor_map: &Value) -> Result<Cow<Vec<(Value, Value)>>, Error> {
     match cbor_map {
         Value::Bytes(b) => value_from_bytes(b)?
             .into_map()
             .map(Cow::Owned)
-            .map_err(|e| anyhow!("Expected a CBOR map: {:?}", e)),
+            .map_err(|e| format!("Expected a CBOR map: {:?}", e)),
         Value::Map(map) => Ok(Cow::Borrowed(map)),
-        _ => bail!("Expected a CBOR map {:?}", cbor_map),
+        _ => Err(format!("Expected a CBOR map {:?}", cbor_map)),
     }
 }
 
@@ -277,33 +295,35 @@ fn lookup_value_in_map(map: &[(Value, Value)], key: i64) -> Option<&Value> {
 }
 
 /// Extract the payload from the COSE Sign
-fn cbor_value_from_cose_sign(cbor: Value) -> Result<Value> {
+fn cbor_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
     let sign1 =
-        CoseSign1::from_cbor_value(cbor).map_err(|e| anyhow!("Error extracting CoseKey: {}", e))?;
+        CoseSign1::from_cbor_value(cbor).map_err(|e| format!("Error extracting CoseKey: {}", e))?;
     match sign1.payload {
-        None => bail!("Missing payload"),
+        None => Err("Missing payload".to_string()),
         Some(payload) => Ok(value_from_bytes(&payload)?),
     }
 }
-fn deserialize_dice_chain(dice_chain_bytes: &[u8]) -> Result<Vec<Value>> {
+fn deserialize_dice_chain(dice_chain_bytes: &[u8]) -> Result<Vec<Value>, Error> {
     // TODO(b/298217847): Check if the given dice chain adheres to Explicit-key DiceCertChain
     // format and if not, convert it.
-    let dice_chain =
-        value_from_bytes(dice_chain_bytes).context("Unable to decode top-level CBOR")?;
+    let dice_chain = value_from_bytes(dice_chain_bytes)
+        .map_err(|e| format!("Unable to decode top-level CBOR: {e:?}"))?;
     let dice_chain = match dice_chain {
         Value::Array(array) if array.len() >= 2 => array,
-        _ => bail!("Expected an array of at least length 2, found: {:?}", dice_chain),
+        _ => {
+            return Err(format!("Expected an array of at least length 2, found: {:?}", dice_chain))
+        }
     };
     Ok(dice_chain)
 }
 
 /// Decodes the provided binary CBOR-encoded value and returns a
 /// ciborium::Value struct wrapped in Result.
-fn value_from_bytes(mut bytes: &[u8]) -> Result<Value> {
-    let value = ciborium::de::from_reader(&mut bytes)?;
+fn value_from_bytes(mut bytes: &[u8]) -> Result<Value, Error> {
+    let value = ciborium::de::from_reader(&mut bytes).map_err(|e| format!("{e:?}"))?;
     // Ciborium tries to read one Value, & doesn't care if there is trailing data after it. We do.
     if !bytes.is_empty() {
-        bail!("Unexpected trailing data while converting to CBOR value");
+        return Err("Unexpected trailing data while converting to CBOR value".to_string());
     }
     Ok(value)
 }
@@ -496,9 +516,9 @@ mod tests {
     }
 
     /// Encodes a ciborium::Value into bytes.
-    fn value_to_bytes(value: &Value) -> Result<Vec<u8>> {
+    fn value_to_bytes(value: &Value) -> Result<Vec<u8>, Error> {
         let mut bytes: Vec<u8> = Vec::new();
-        ciborium::ser::into_writer(&value, &mut bytes)?;
+        ciborium::ser::into_writer(&value, &mut bytes).map_err(|e| format!("{e:?}"))?;
         Ok(bytes)
     }
 }
