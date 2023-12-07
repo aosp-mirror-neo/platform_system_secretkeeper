@@ -22,3 +22,4 @@ extern crate alloc;
 
 mod cbor_convert;
 pub mod data_types;
+pub mod ta;
