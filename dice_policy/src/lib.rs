@@ -60,7 +60,7 @@
 #![allow(missing_docs)] // Sadly needed due to use of enumn::N
 
 use ciborium::Value;
-use coset::{AsCborValue, CoseSign1};
+use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
 use enumn::N;
 use std::borrow::Cow;
 use std::iter::zip;
@@ -68,6 +68,16 @@ use std::iter::zip;
 type Error = String;
 
 const DICE_POLICY_VERSION: u64 = 1;
+
+/// Given an Android dice chain, check if it matches the given policy. This method returns
+/// Ok(()) in case of successful match, otherwise returns error in case of failure.
+pub fn chain_matches_policy(dice_chain: &[u8], policy: &[u8]) -> Result<(), Error> {
+    DicePolicy::from_slice(policy)
+        .map_err(|e| format!("DicePolicy decoding failed {e:?}"))?
+        .matches_dice_chain(dice_chain)
+        .map_err(|e| format!("DicePolicy matching failed {e:?}"))?;
+    Ok(())
+}
 
 /// Constraint Types supported in Dice policy.
 #[repr(u16)]
@@ -102,19 +112,102 @@ impl ConstraintSpec {
 // TODO(b/291238565): Restrict (nested_)key & value type to (bool/int/tstr/bstr).
 // and maybe convert it into struct.
 /// Each constraint (on a dice node) is a tuple: (ConstraintType, constraint_path, value)
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Constraint(u16, Vec<i64>, Value);
 
+// Keep this in sync with [`nodeConstraint`] the CDDL above.
+impl AsCborValue for Constraint {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        let [constrained_type, constraint_path, val] = value
+            .into_array()
+            .map_err(|_| UnexpectedItem("-", "Array"))?
+            .try_into()
+            .map_err(|_| UnexpectedItem("Array", "Array of size 3"))?;
+        let constrained_type: u16 = value_to_integer(&constrained_type)?
+            .try_into()
+            .map_err(|_| UnexpectedItem("Integer", "u16"))?;
+        let path_res: Vec<i64> = constraint_path
+            .into_array()
+            .map_err(|_| UnexpectedItem("-", "Array"))?
+            .iter()
+            .map(value_to_integer)
+            .collect::<Result<_, _>>()?;
+        Ok(Self(constrained_type, path_res, val))
+    }
+
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        Ok(Value::Array(vec![
+            Value::from(self.0),
+            Value::Array(self.1.into_iter().map(Value::from).collect()),
+            self.2,
+        ]))
+    }
+}
+
 /// List of all constraints on a dice node.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct NodeConstraints(Box<[Constraint]>);
 
+// Keep this in sync with [`nodeConstraintList`] in the CDDL above.
+impl AsCborValue for NodeConstraints {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        let res: Vec<Constraint> = value
+            .into_array()
+            .map_err(|_| UnexpectedItem("-", "Array"))?
+            .into_iter()
+            .map(Constraint::from_cbor_value)
+            .collect::<Result<_, _>>()?;
+        if res.is_empty() {
+            return Err(UnexpectedItem("Empty array", "Non empty array"));
+        }
+        Ok(Self(res.into_boxed_slice()))
+    }
+
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        let res: Vec<Value> = self
+            .0
+            .into_vec()
+            .into_iter()
+            .map(Constraint::to_cbor_value)
+            .collect::<Result<_, _>>()?;
+        Ok(Value::Array(res))
+    }
+}
+
 /// Module for working with dice policy.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DicePolicy {
     version: u64,
     node_constraints_list: Box<[NodeConstraints]>, // Constraint on each entry in dice chain.
 }
+
+// Keep this in sync with [`dicePolicy`] in the CDDL above.
+impl AsCborValue for DicePolicy {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        let mut arr = value.into_array().map_err(|_| UnexpectedItem("-", "Array"))?;
+        if arr.len() < 2 {
+            return Err(UnexpectedItem("Array", "Array with at least 2 elements"));
+        }
+        let (version, node_cons_list) = (value_to_integer(arr.first().unwrap())?, arr.split_off(1));
+        let version: u64 = version.try_into().map_err(|_| UnexpectedItem("-", "u64"))?;
+        let node_cons_list: Vec<NodeConstraints> = node_cons_list
+            .into_iter()
+            .map(NodeConstraints::from_cbor_value)
+            .collect::<Result<_, _>>()?;
+        Ok(Self { version, node_constraints_list: node_cons_list.into_boxed_slice() })
+    }
+
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        let mut res: Vec<Value> = Vec::with_capacity(1 + self.node_constraints_list.len());
+        res.push(Value::from(self.version));
+        for node_cons in self.node_constraints_list.into_vec() {
+            res.push(node_cons.to_cbor_value()?)
+        }
+        Ok(Value::Array(res))
+    }
+}
+
+impl CborSerializable for DicePolicy {}
 
 impl DicePolicy {
     /// Construct a dice policy from a given dice chain.
@@ -328,6 +421,17 @@ fn value_from_bytes(mut bytes: &[u8]) -> Result<Value, Error> {
     Ok(value)
 }
 
+// Useful to convert [`ciborium::Value`] to integer. Note we already downgrade the returned
+// integer to i64 for convenience. Value::Integer is capable of storing bigger numbers.
+fn value_to_integer(value: &Value) -> Result<i64, CoseError> {
+    let num = value
+        .as_integer()
+        .ok_or(CoseError::UnexpectedItem("-", "Integer"))?
+        .try_into()
+        .map_err(|_| CoseError::UnexpectedItem("Integer", "i64"))?;
+    Ok(num)
+}
+
 #[cfg(test)]
 rdroidtest::test_main!();
 
@@ -459,6 +563,16 @@ mod tests {
 
         // Assert policy is exactly as expected!
         assert_eq!(policy, example.expected_dice_policy);
+    }
+
+    test!(policy_enc_dec_test);
+    fn policy_enc_dec_test() {
+        // An example dice policy
+        let dice_policy: DicePolicy = TestArtifacts::get_example().expected_dice_policy;
+        // Encode & then decode back!
+        let dice_policy_enc_dec =
+            DicePolicy::from_slice(&dice_policy.clone().to_vec().unwrap()).unwrap();
+        assert_eq!(dice_policy, dice_policy_enc_dec);
     }
 
     test!(policy_matches_original_dice_chain);
