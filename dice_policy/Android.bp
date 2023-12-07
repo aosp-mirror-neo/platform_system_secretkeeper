@@ -9,12 +9,12 @@ rust_defaults {
     srcs: ["src/lib.rs"],
     edition: "2021",
     lints: "android",
-    prefer_rlib: true,
     rustlibs: [
         "libciborium",
         "libcoset",
     ],
     proc_macros: ["libenumn"],
+    vendor_available: true,
 }
 
 rust_library {
