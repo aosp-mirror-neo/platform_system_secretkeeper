@@ -43,7 +43,7 @@ pub trait Response {
     ///             error_message: tstr         ; Additional human-readable context
     ///         ]
     /// ```
-    /// See ResponsePacket<Result> in SecretManagement.cddl alongside ISecretkeeper.aidl
+    /// See `ResponsePacket<Result>` in SecretManagement.cddl alongside ISecretkeeper.aidl
     fn new(response_cbor: Vec<Value>) -> Result<Box<Self>, Error>;
 
     /// The result in the `Response`. By default this is empty, but [`Response`] structures like
