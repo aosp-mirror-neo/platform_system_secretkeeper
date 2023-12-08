@@ -16,13 +16,6 @@
 
 //! Implementation of a SecretKeeper trusted application (TA).
 
-use crate::data_types::{
-    error::SecretkeeperError,
-    packet::{RequestPacket, ResponsePacket},
-    request::Request,
-    request_response_impl::{GetVersionRequest, GetVersionResponse, Opcode},
-    response::Response,
-};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -36,6 +29,14 @@ use authgraph_core::traits::{AesGcm, CryptoTraitImpl, Device, EcDsa, Rng, Sha256
 use authgraph_wire::{ErrorCode, SESSION_ID_LEN};
 use coset::{iana, CborSerializable};
 use log::{error, warn};
+use secretkeeper_comm::data_types::{
+    error::Error as SkInternalError,
+    error::SecretkeeperError,
+    packet::{RequestPacket, ResponsePacket},
+    request::Request,
+    request_response_impl::{GetVersionRequest, GetVersionResponse, Opcode},
+    response::Response,
+};
 
 /// Current Secretkeeper version.
 const CURRENT_VERSION: u64 = 1;
@@ -67,20 +68,20 @@ pub struct SecretkeeperTa {
 
 impl SecretkeeperTa {
     /// Create a TA instance using the provided trait implementations.
-    pub fn new(ag_impls: &mut CryptoTraitImpl) -> Result<Self, crate::data_types::error::Error> {
+    pub fn new(ag_impls: &mut CryptoTraitImpl) -> Result<Self, SkInternalError> {
         // Create a per-boot-key for AuthGraph to use.
         let aes_gcm = ag_impls.aes_gcm.box_clone();
         let rng = ag_impls.rng.box_clone();
         let per_boot_key = aes_gcm.generate_key(&mut *ag_impls.rng).map_err(|e| {
             error!("Failed to generate per-boot key: {e:?}");
-            crate::data_types::error::Error::UnexpectedError
+            SkInternalError::UnexpectedError
         })?;
 
         // TODO: replace with actual Secretkeeper identity and signing key.
         let (priv_key, pub_key) =
             authgraph_boringssl::ec::create_p256_key_pair(iana::Algorithm::ES256).map_err(|e| {
                 error!("Failed to generate P-256 keypair: {e:?}");
-                crate::data_types::error::Error::UnexpectedError
+                SkInternalError::UnexpectedError
             })?;
         let identity_sign_key = EcSignKey::P256(priv_key);
         let identity = Identity {
