@@ -135,7 +135,7 @@ impl SecretkeeperTa {
         // as args being empty.
         let _req = GetVersionRequest::deserialize_from_packet(req)
             .map_err(|_| SecretkeeperError::RequestMalformed)?;
-        let rsp = GetVersionResponse::new(CURRENT_VERSION);
+        let rsp = GetVersionResponse { version: CURRENT_VERSION };
         Ok(rsp.serialize_to_packet())
     }
 
