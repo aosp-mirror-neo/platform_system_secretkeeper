@@ -16,20 +16,21 @@
 
 //! Defines the packet structures passed between functional layer & the layer below.
 
-pub use ciborium::Value;
+use ciborium::Value;
 
-use crate::cbor_convert::{value_from_bytes, value_to_bytes, value_to_integer};
+use crate::cbor_convert::value_to_integer;
 use crate::data_types::error::Error;
 use crate::data_types::error::ERROR_OK;
 use crate::data_types::request_response_impl::Opcode;
 use alloc::vec::Vec;
+use coset::{AsCborValue, CborSerializable, CoseError};
 
 /// Encapsulate Request-like data that functional layer operates on. All structures
 /// that implements `data_types::request::Request` can be serialized to [`ResponsePacket`].
 /// Similarly all [`RequestPacket`] can be deserialized to concrete Requests.
 /// Keep in sync with HAL spec (in particular RequestPacket):
 ///     security/secretkeeper/aidl/android/hardware/security/secretkeeper/SecretManagement.cddl
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct RequestPacket(Vec<Value>);
 
 impl RequestPacket {
@@ -54,22 +55,25 @@ impl RequestPacket {
 
         Opcode::n(num).ok_or(Error::RequestMalformed)
     }
+}
 
-    /// Serialize the [`ResponsePacket`] to bytes
-    pub fn into_bytes(self) -> Result<Vec<u8>, Error> {
-        value_to_bytes(&Value::Array(self.0))
+impl AsCborValue for RequestPacket {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        Ok(Self(value.into_array().map_err(|_| CoseError::UnexpectedItem("-", "Array"))?))
     }
 
-    /// Deserialize the bytes into [`ResponsePacket`]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        Ok(RequestPacket(value_from_bytes(bytes)?.into_array()?))
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        Ok(Value::Array(self.0))
     }
 }
+
+// Serialize/Deserialize the [`RequestPacket`] to bytes
+impl CborSerializable for RequestPacket {}
 
 /// Encapsulate Response like data that the functional layer operates on. All structures
 /// that implements `data_types::response::Response` can be serialized to [`ResponsePacket`].
 /// Similarly all [`ResponsePacket`] can be deserialized to concrete Response.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ResponsePacket(Vec<Value>);
 
 impl ResponsePacket {
@@ -96,17 +100,20 @@ impl ResponsePacket {
             Ok(ResponseType::Error)
         }
     }
+}
 
-    /// Serialize the [`ResponsePacket`] to bytes
-    pub fn into_bytes(self) -> Result<Vec<u8>, Error> {
-        value_to_bytes(&Value::Array(self.0))
+impl AsCborValue for ResponsePacket {
+    fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
+        Ok(Self(value.into_array().map_err(|_| CoseError::UnexpectedItem("-", "Array"))?))
     }
 
-    /// Deserialize the bytes into [`ResponsePacket`]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        Ok(ResponsePacket(value_from_bytes(bytes)?.into_array()?))
+    fn to_cbor_value(self) -> Result<Value, CoseError> {
+        Ok(Value::Array(self.0))
     }
 }
+
+// Serialize/Deserialize the [`ResponsePacket`] to bytes
+impl CborSerializable for ResponsePacket {}
 
 /// Responses can be different type - `Success`-like or `Error`-like.
 #[derive(Debug, Eq, PartialEq)]
