@@ -29,7 +29,9 @@ rust_library {
         // TODO(b/315464358): Use no_std version of authgraph_core/authgraph_wire/coset
         "libauthgraph_core",
         "libauthgraph_wire",
+        "libciborium",
         "libcoset",
+        "libdice_policy",
         "liblog_rust",
         "libsecretkeeper_comm_nostd",
         // TODO: remove dependency on BoringSSL when real identity available

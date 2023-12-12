@@ -16,6 +16,7 @@
 
 //! Implementation of a SecretKeeper trusted application (TA).
 
+use crate::store::{KeyValueStore, PolicyGatedStorage};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -34,7 +35,10 @@ use secretkeeper_comm::data_types::{
     error::SecretkeeperError,
     packet::{RequestPacket, ResponsePacket},
     request::Request,
-    request_response_impl::{GetVersionRequest, GetVersionResponse, Opcode},
+    request_response_impl::{
+        GetSecretRequest, GetSecretResponse, GetVersionRequest, GetVersionResponse, Opcode,
+        StoreSecretRequest, StoreSecretResponse,
+    },
     response::Response,
 };
 
@@ -44,7 +48,20 @@ const CURRENT_VERSION: u64 = 1;
 /// Maximum number of live session keys.
 const MAX_SESSIONS: usize = 32;
 
-/// AuthGraph trusted application instance.
+// TODO: Remove the hypothetical dice chain, we will need dice chain, alongwith secrets for
+// signing it for testing.
+// Developer note: I've got this chain by patching libdice_policy such that it dumps the
+// dice_policy corresponding to a hypothetical dice_chain (which is hard-coded input in
+// VTS secretkeeper_test_client.rs)
+const HYPOTHETICAL_DICE_CHAIN: [u8; 66] = [
+    0x82, 0xA1, 0x01, 0x00, 0x84, 0x40, 0xA0, 0x58, 0x34, 0xA3, 0x01, 0x73, 0x74, 0x65, 0x73, 0x74,
+    0x69, 0x6E, 0x67, 0x5F, 0x64, 0x69, 0x63, 0x65, 0x5F, 0x70, 0x6F, 0x6C, 0x69, 0x63, 0x79, 0x02,
+    0x74, 0x75, 0x6E, 0x63, 0x6F, 0x6E, 0x73, 0x74, 0x72, 0x61, 0x69, 0x6E, 0x65, 0x64, 0x5F, 0x73,
+    0x74, 0x72, 0x69, 0x6E, 0x67, 0x03, 0x46, 0xA1, 0x18, 0x64, 0x19, 0xE9, 0x75, 0x44, 0x64, 0x64,
+    0x65, 0x66,
+];
+
+/// Secretkeeper trusted application instance.
 pub struct SecretkeeperTa {
     /// AES-GCM implementation.
     aes_gcm: Box<dyn AesGcm>,
@@ -64,11 +81,17 @@ pub struct SecretkeeperTa {
 
     /// Current session keys.
     session_keys: VecDeque<SessionKeyInfo>,
+
+    /// Storage of secrets (& sealing policy)
+    store: PolicyGatedStorage,
 }
 
 impl SecretkeeperTa {
     /// Create a TA instance using the provided trait implementations.
-    pub fn new(ag_impls: &mut CryptoTraitImpl) -> Result<Self, SkInternalError> {
+    pub fn new(
+        ag_impls: &mut CryptoTraitImpl,
+        storage_impl: Box<dyn KeyValueStore>,
+    ) -> Result<Self, SkInternalError> {
         // Create a per-boot-key for AuthGraph to use.
         let aes_gcm = ag_impls.aes_gcm.box_clone();
         let rng = ag_impls.rng.box_clone();
@@ -93,6 +116,7 @@ impl SecretkeeperTa {
             },
             policy: None,
         };
+        let store = PolicyGatedStorage::init(storage_impl);
 
         Ok(Self {
             aes_gcm,
@@ -101,6 +125,7 @@ impl SecretkeeperTa {
             identity_sign_key: Some(identity_sign_key),
             identity: Some(identity),
             session_keys: VecDeque::new(),
+            store,
         })
     }
 
@@ -117,7 +142,7 @@ impl SecretkeeperTa {
             },
         )
     }
-    fn process_inner(&self, req: &[u8]) -> Result<Vec<u8>, SecretkeeperError> {
+    fn process_inner(&mut self, req: &[u8]) -> Result<Vec<u8>, SecretkeeperError> {
         let req_packet = RequestPacket::from_slice(req).map_err(|e| {
             error!("Failed to get Request packet from bytes: {e:?}");
             SecretkeeperError::RequestMalformed
@@ -125,7 +150,9 @@ impl SecretkeeperTa {
         let rsp_packet =
             match req_packet.opcode().map_err(|_| SecretkeeperError::RequestMalformed)? {
                 Opcode::GetVersion => Self::get_version(req_packet)?,
-                _ => todo!("TODO(b/291224769): Unimplemented operations"),
+                Opcode::StoreSecret => self.store_secret(req_packet)?,
+                Opcode::GetSecret => self.get_secret(req_packet)?,
+                _ => panic!("Unknown operation.."),
             };
 
         rsp_packet.to_vec().map_err(|_| SecretkeeperError::UnexpectedServerError)
@@ -138,6 +165,38 @@ impl SecretkeeperTa {
             .map_err(|_| SecretkeeperError::RequestMalformed)?;
         let rsp = GetVersionResponse { version: CURRENT_VERSION };
         Ok(rsp.serialize_to_packet())
+    }
+
+    fn store_secret(
+        &mut self,
+        request: RequestPacket,
+    ) -> Result<ResponsePacket, SecretkeeperError> {
+        let request = StoreSecretRequest::deserialize_from_packet(request)
+            .map_err(|_| SecretkeeperError::RequestMalformed)?;
+        self.store.store(
+            request.id,
+            request.secret,
+            request.sealing_policy,
+            // TODO(b/291228560): Identify the session & use the corresponding `Identity`
+            // instead of hardcoded chain.
+            &HYPOTHETICAL_DICE_CHAIN,
+        )?;
+        let response = StoreSecretResponse {};
+        Ok(response.serialize_to_packet())
+    }
+
+    fn get_secret(&mut self, request: RequestPacket) -> Result<ResponsePacket, SecretkeeperError> {
+        let request = GetSecretRequest::deserialize_from_packet(request)
+            .map_err(|_| SecretkeeperError::RequestMalformed)?;
+        let secret = self.store.get(
+            &request.id,
+            // TODO(b/291228560): Dice chain should be received during AuthgraphKeyExchange
+            // instead of being hard-coded.
+            &HYPOTHETICAL_DICE_CHAIN,
+            request.updated_sealing_policy,
+        )?;
+        let response = GetSecretResponse { secret };
+        Ok(response.serialize_to_packet())
     }
 
     #[allow(dead_code)] // TODO: remove this
