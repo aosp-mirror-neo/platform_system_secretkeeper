@@ -24,6 +24,7 @@ use crate::data_types::response::Response;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use ciborium::Value;
+use coset::CoseError;
 use enumn::N;
 
 /// 'Error code' corresponding to successful response.
@@ -37,7 +38,12 @@ pub enum SecretkeeperError {
     UnexpectedServerError = 1,
     // Indicates the Request was malformed & hence couldn't be served.
     RequestMalformed = 2,
-    // TODO(b/291228655): Add other errors such as DicePolicyError.
+    /// Requested Entry not found.
+    EntryNotFound = 3,
+    /// Errors originating during serialization or deserialization
+    SerializationError = 4,
+    /// Policy matching did not succeed & hence access not granted.
+    DicePolicyError = 5,
 }
 
 // [`SecretkeeperError`] is a valid [`Response`] type.
@@ -90,5 +96,19 @@ impl From<ciborium::Value> for Error {
 impl From<core::num::TryFromIntError> for Error {
     fn from(_e: core::num::TryFromIntError) -> Self {
         Self::ConversionError
+    }
+}
+
+impl From<coset::CoseError> for Error {
+    fn from(e: coset::CoseError) -> Self {
+        match e {
+            CoseError::DecodeFailed(_)
+            | CoseError::EncodeFailed
+            | CoseError::UnexpectedItem(_, _) => Self::ConversionError,
+            _ => {
+                // TODO: Map other COSE errors to precise errors when we use coset more heavily.
+                Self::UnexpectedError
+            }
+        }
     }
 }
