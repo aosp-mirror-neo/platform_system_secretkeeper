@@ -24,6 +24,9 @@ use android_hardware_security_authgraph::aidl::android::hardware::security::auth
 };
 use authgraph_hal::channel::SerializedChannel;
 use authgraph_hal::service::AuthGraphService;
+use coset::CborSerializable;
+use secretkeeper_comm::wire::{PerformOpSuccessRsp, PerformOpResponse, ApiError, PerformOpReq, AidlErrorCode, SecretId};
+use std::ffi::CString;
 
 /// Implementation of the Secretkeeper HAL service, communicating with a TA
 /// in a secure environment via a communication channel.
@@ -55,10 +58,80 @@ impl<T: SerializedChannel> binder::Interface for SecretkeeperService<T> {}
 /// Implement the `ISecretkeeper` interface.
 impl<T: SerializedChannel> ISecretkeeper for SecretkeeperService<T> {
     fn processSecretManagementRequest(&self, req: &[u8]) -> binder::Result<Vec<u8>> {
-        // Pass the request to the channel, and read the response.
-        self.channel.execute(req)
+        let wrapper = PerformOpReq::SecretManagement(req.to_vec());
+        let wrapper_data = wrapper.to_vec().map_err(failed_cbor)?;
+        let rsp_data = self.channel.execute(&wrapper_data)?;
+        let rsp = PerformOpResponse::from_slice(&rsp_data).map_err(failed_cbor)?;
+        match rsp {
+            PerformOpResponse::Success(PerformOpSuccessRsp::ProtectedResponse(data)) => Ok(data),
+            PerformOpResponse::Success(_) => Err(unexpected_response_type()),
+            PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
+        }
     }
     fn getAuthGraphKe(&self) -> binder::Result<binder::Strong<dyn IAuthGraphKeyExchange>> {
         Ok(self.authgraph.clone())
     }
+}
+
+// TODO: fold these into `impl ISecretkeeper` above.
+#[allow(non_snake_case)]
+impl<T: SerializedChannel> SecretkeeperService<T> {
+    /// Delete some secrets.
+    pub fn deleteById(&self, ids: &[Vec<u8>]) -> binder::Result<()> {
+        let ids: Vec<SecretId> = ids
+            .iter()
+            .map(|id| SecretId::try_from(id.as_slice()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_e| {
+                binder::Status::new_exception(
+                    binder::ExceptionCode::ILLEGAL_ARGUMENT,
+                    Some(&std::ffi::CString::new("secret ID of wrong length".to_string()).unwrap()),
+                )
+            })?;
+        let wrapper = PerformOpReq::DeleteIds(ids);
+        let wrapper_data = wrapper.to_vec().map_err(failed_cbor)?;
+        let rsp_data = self.channel.execute(&wrapper_data)?;
+        let rsp = PerformOpResponse::from_slice(&rsp_data).map_err(failed_cbor)?;
+        match rsp {
+            PerformOpResponse::Success(PerformOpSuccessRsp::Empty) => Ok(()),
+            PerformOpResponse::Success(_) => Err(unexpected_response_type()),
+            PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
+        }
+    }
+    /// No more secrets.
+    pub fn deleteAll(&self) -> binder::Result<()> {
+        let wrapper = PerformOpReq::DeleteAll;
+        let wrapper_data = wrapper.to_vec().map_err(failed_cbor)?;
+        let rsp_data = self.channel.execute(&wrapper_data)?;
+        let rsp = PerformOpResponse::from_slice(&rsp_data).map_err(failed_cbor)?;
+        match rsp {
+            PerformOpResponse::Success(PerformOpSuccessRsp::Empty) => Ok(()),
+            PerformOpResponse::Success(_) => Err(unexpected_response_type()),
+            PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
+        }
+    }
+}
+
+/// Emit a failure for a failed CBOR conversion.
+fn failed_cbor(err: coset::CoseError) -> binder::Status {
+    binder::Status::new_exception(
+        binder::ExceptionCode::BAD_PARCELABLE,
+        Some(&std::ffi::CString::new(format!("CBOR conversion failed: {err:?}")).unwrap()),
+    )
+}
+
+/// Emit a service specific error.
+fn service_specific_error(err: ApiError) -> binder::Status {
+    binder::Status::new_service_specific_error(
+        err.err_code as i32,
+        Some(&CString::new(err.msg).unwrap()),
+    )
+}
+
+/// Emit an error indicating an unexpected type of response received from the TA.
+fn unexpected_response_type() -> binder::Status {
+    service_specific_error(ApiError {
+        err_code: AidlErrorCode::InternalError,
+        msg: "unexpected response type".to_string(),
+    })
 }
