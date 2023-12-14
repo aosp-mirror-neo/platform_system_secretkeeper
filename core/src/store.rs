@@ -152,6 +152,16 @@ impl PolicyGatedStorage {
             }
         }
     }
+
+    /// Delete the `value` corresponding to the given `key`.
+    pub fn delete(&mut self, key: &Id) -> Result<(), SecretkeeperError> {
+        self.secure_store.delete(key.0.as_slice()).map_err(unexpected_err)
+    }
+
+    /// Delete all stored key-value pairs.
+    pub fn delete_all(&mut self) -> Result<(), SecretkeeperError> {
+        self.secure_store.delete_all().map_err(unexpected_err)
+    }
 }
 
 #[inline]
@@ -216,6 +226,13 @@ impl CborSerializable for Entry {}
 pub trait KeyValueStore {
     /// Store a key-value pair. If the key is already present, replace the corresponding value.
     fn store(&mut self, key: &[u8], value: &[u8]) -> Result<(), Error>;
-    /// Get the `value` corresponding to given `key`. Return None if the key is not found.
+
+    /// Get the `value` corresponding to the given `key`. Return None if the key is not found.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Error>;
+
+    /// Delete the `value` corresponding to the given `key`.
+    fn delete(&mut self, key: &[u8]) -> Result<(), Error>;
+
+    /// Delete all stored key-value pairs.
+    fn delete_all(&mut self) -> Result<(), Error>;
 }

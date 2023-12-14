@@ -237,9 +237,9 @@ pub struct ApiError {
 }
 
 /// Error codes emitted as service specific errors at the HAL.
-/// Keep in sync with:
+/// Keep in sync with the ERROR_ codes in:
 /// hardware/interfaces/security/secretkeeper/aidl/
-///   android/hardware/security/secretkeeper/AidlErrorCode.aidl
+///   android/hardware/security/secretkeeper/ISecretkeeper.aidl
 #[derive(Debug, Clone, Copy, N)]
 pub enum AidlErrorCode {
     Ok = 0,

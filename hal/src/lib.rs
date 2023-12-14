@@ -16,8 +16,11 @@
 
 //! Crate that holds common code for a Secretkeeper HAL service.
 
-use android_hardware_security_secretkeeper::aidl::android::hardware::security::secretkeeper::ISecretkeeper::{
-    ISecretkeeper, BnSecretkeeper
+use android_hardware_security_secretkeeper::aidl::android::hardware::security::secretkeeper::{
+    ISecretkeeper::{
+        ISecretkeeper, BnSecretkeeper
+    },
+    SecretId::SecretId as AidlSecretId,
 };
 use android_hardware_security_authgraph::aidl::android::hardware::security::authgraph::{
     IAuthGraphKeyExchange::IAuthGraphKeyExchange,
@@ -68,19 +71,15 @@ impl<T: SerializedChannel> ISecretkeeper for SecretkeeperService<T> {
             PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
         }
     }
+
     fn getAuthGraphKe(&self) -> binder::Result<binder::Strong<dyn IAuthGraphKeyExchange>> {
         Ok(self.authgraph.clone())
     }
-}
 
-// TODO: fold these into `impl ISecretkeeper` above.
-#[allow(non_snake_case)]
-impl<T: SerializedChannel> SecretkeeperService<T> {
-    /// Delete some secrets.
-    pub fn deleteById(&self, ids: &[Vec<u8>]) -> binder::Result<()> {
+    fn deleteIds(&self, ids: &[AidlSecretId]) -> binder::Result<()> {
         let ids: Vec<SecretId> = ids
             .iter()
-            .map(|id| SecretId::try_from(id.as_slice()))
+            .map(|id| SecretId::try_from(id.id.as_slice()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_e| {
                 binder::Status::new_exception(
@@ -98,8 +97,8 @@ impl<T: SerializedChannel> SecretkeeperService<T> {
             PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
         }
     }
-    /// No more secrets.
-    pub fn deleteAll(&self) -> binder::Result<()> {
+
+    fn deleteAll(&self) -> binder::Result<()> {
         let wrapper = PerformOpReq::DeleteAll;
         let wrapper_data = wrapper.to_vec().map_err(failed_cbor)?;
         let rsp_data = self.channel.execute(&wrapper_data)?;
