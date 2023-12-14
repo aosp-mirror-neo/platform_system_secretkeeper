@@ -28,6 +28,8 @@ rust_library {
     rustlibs: [
         "libauthgraph_hal",
         "libbinder_rs",
+        "libcoset",
         "liblog_rust",
+        "libsecretkeeper_comm_nostd",
     ],
 }

@@ -20,5 +20,6 @@
 #![no_std]
 extern crate alloc;
 
+pub mod cipher;
 pub mod store;
 pub mod ta;
