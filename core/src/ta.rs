@@ -16,9 +16,11 @@
 
 //! Implementation of a SecretKeeper trusted application (TA).
 
+use crate::cipher;
 use crate::store::{KeyValueStore, PolicyGatedStorage};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use authgraph_core::ag_err;
 use authgraph_core::error::Error;
@@ -28,8 +30,8 @@ use authgraph_core::key::{
 };
 use authgraph_core::traits::{AesGcm, CryptoTraitImpl, Device, EcDsa, Rng, Sha256};
 use authgraph_wire::{ErrorCode, SESSION_ID_LEN};
-use coset::{iana, CborSerializable};
-use log::{error, warn};
+use coset::{iana, CborSerializable, CoseEncrypt0};
+use log::{error, trace, warn};
 use secretkeeper_comm::data_types::{
     error::Error as SkInternalError,
     error::SecretkeeperError,
@@ -40,6 +42,9 @@ use secretkeeper_comm::data_types::{
         StoreSecretRequest, StoreSecretResponse,
     },
     response::Response,
+};
+use secretkeeper_comm::wire::{
+    AidlErrorCode, ApiError, PerformOpReq, PerformOpResponse, PerformOpSuccessRsp, SecretId,
 };
 
 /// Current Secretkeeper version.
@@ -61,13 +66,24 @@ const HYPOTHETICAL_DICE_CHAIN: [u8; 66] = [
     0x65, 0x66,
 ];
 
+/// Macro to build an [`ApiError`] instance.
+/// E.g. use: `aidl_err!(InternalError, "some {} format", arg)`.
+#[macro_export]
+macro_rules! aidl_err {
+    { $error_code:ident, $($arg:tt)+ } => {
+        ApiError {
+            err_code: AidlErrorCode::$error_code,
+            msg: alloc::format!("{}:{}: {}", file!(), line!(), format_args!($($arg)+))
+        }
+    };
+}
+
 /// Secretkeeper trusted application instance.
 pub struct SecretkeeperTa {
     /// AES-GCM implementation.
     aes_gcm: Box<dyn AesGcm>,
 
     /// RNG implementation.
-    #[allow(dead_code)] // TODO: remove this
     rng: Box<dyn Rng>,
 
     /// AuthGraph per-boot-key.
@@ -129,19 +145,72 @@ impl SecretkeeperTa {
         })
     }
 
-    /// Process a single serialized request, returning a serialized response.
-    pub fn process(&mut self, req: &[u8]) -> Vec<u8> {
-        // TODO(b/291224769) The request will need to be decrypted & response need to be encrypted
-        // with key & related artifacts pre-shared via Authgraph Key Exchange HAL.
-        self.process_inner(req).unwrap_or_else(
-            // SecretkeeperError is also a valid 'Response', serialize to a response packet.
-            |sk_err| {
-                Response::serialize_to_packet(&sk_err)
-                    .to_vec()
-                    .expect("Panicking due to serialization failing")
-            },
-        )
+    /// Process a single serialized request, returning a serialized response (even on failure).
+    pub fn process(&mut self, req_data: &[u8]) -> Vec<u8> {
+        let (req_code, rsp) = match PerformOpReq::from_slice(req_data) {
+            Ok(req) => {
+                trace!("-> TA: received request {:?}", req.code());
+                (Some(req.code()), self.process_req(req))
+            }
+            Err(e) => {
+                error!("failed to decode CBOR request: {:?}", e);
+                (None, PerformOpResponse::Failure(aidl_err!(InternalError, "CBOR decode failure")))
+            }
+        };
+        trace!("<- TA: send response for {:?} rc {:?}", req_code, rsp.err_code());
+        rsp.to_vec().unwrap_or_else(|e| {
+            error!("failed to encode CBOR response: {:?}", e);
+            invalid_cbor_rsp_data().to_vec()
+        })
     }
+
+    /// Process a single request, returning a [`PerformOpResponse`].
+    fn process_req(&mut self, req: PerformOpReq) -> PerformOpResponse {
+        let code = req.code();
+        let result = match req {
+            PerformOpReq::SecretManagement(encrypt0) => {
+                self.secret_management(&encrypt0).map(PerformOpSuccessRsp::ProtectedResponse)
+            }
+            PerformOpReq::DeleteIds(ids) => {
+                self.delete_ids(ids).map(|_| PerformOpSuccessRsp::Empty)
+            }
+            PerformOpReq::DeleteAll => self.delete_all().map(|_| PerformOpSuccessRsp::Empty),
+        };
+        match result {
+            Ok(rsp) => PerformOpResponse::Success(rsp),
+            Err(err) => {
+                warn!("failing {:?} request: {:?}", code, err);
+                PerformOpResponse::Failure(err)
+            }
+        }
+    }
+
+    fn delete_ids(&mut self, ids: Vec<SecretId>) -> Result<(), ApiError> {
+        Err(ApiError {
+            err_code: AidlErrorCode::InternalError,
+            msg: alloc::format!("TODO with {ids:?}"),
+        })
+    }
+
+    fn delete_all(&mut self) -> Result<(), ApiError> {
+        Err(ApiError { err_code: AidlErrorCode::InternalError, msg: "TODO".to_string() })
+    }
+
+    fn secret_management(&mut self, encrypt0: &[u8]) -> Result<Vec<u8>, ApiError> {
+        let (req, session_keys) = self.decrypt_request(encrypt0)?;
+        let result = self.process_inner(&req);
+
+        // An inner failure still converts to a response message that gets encrypted.
+        let rsp_data = match result {
+            Ok(data) => data,
+            Err(e) => e
+                .serialize_to_packet()
+                .to_vec()
+                .map_err(|_e| aidl_err!(InternalError, "failed to encode err rsp"))?,
+        };
+        self.encrypt_response(&session_keys, &rsp_data)
+    }
+
     fn process_inner(&mut self, req: &[u8]) -> Result<Vec<u8>, SecretkeeperError> {
         let req_packet = RequestPacket::from_slice(req).map_err(|e| {
             error!("Failed to get Request packet from bytes: {e:?}");
@@ -154,7 +223,6 @@ impl SecretkeeperTa {
                 Opcode::GetSecret => self.get_secret(req_packet)?,
                 _ => panic!("Unknown operation.."),
             };
-
         rsp_packet.to_vec().map_err(|_| SecretkeeperError::UnexpectedServerError)
     }
 
@@ -199,9 +267,33 @@ impl SecretkeeperTa {
         Ok(response.serialize_to_packet())
     }
 
-    #[allow(dead_code)] // TODO: remove this
+    // "SSL added and removed here :-)"
     fn keys_for_session(&self, session_id: &[u8; SESSION_ID_LEN]) -> Option<&SessionKeyInfo> {
         self.session_keys.iter().find(|info| info.session_id == *session_id)
+    }
+    fn decrypt_request(&self, req: &[u8]) -> Result<(Vec<u8>, SessionKeyInfo), ApiError> {
+        let encrypt0 = CoseEncrypt0::from_slice(req)
+            .map_err(|_e| aidl_err!(RequestMalformed, "malformed COSE_Encrypt0"))?;
+        let session_keys = self
+            .keys_for_session(&encrypt0.protected.header.key_id[..].try_into().map_err(|e| {
+                aidl_err!(RequestMalformed, "session key of unexpected size: {e:?}")
+            })?)
+            .ok_or_else(|| aidl_err!(UnknownKeyId, "session key not found"))?;
+        let payload = cipher::decrypt_message(&*self.aes_gcm, &session_keys.recv_key, &encrypt0)?;
+        Ok((payload, session_keys.clone()))
+    }
+    fn encrypt_response(
+        &self,
+        session_keys: &SessionKeyInfo,
+        rsp: &[u8],
+    ) -> Result<Vec<u8>, ApiError> {
+        cipher::encrypt_message(
+            &*self.aes_gcm,
+            &*self.rng,
+            &session_keys.send_key,
+            &session_keys.session_id,
+            rsp,
+        )
     }
 }
 
@@ -283,10 +375,22 @@ impl Device for SecretkeeperTa {
     }
 }
 
-#[allow(dead_code)] // TODO: remove this
+#[derive(Clone)]
 struct SessionKeyInfo {
     _peer_identity: Identity,
     session_id: [u8; 32],
     send_key: AesKey,
     recv_key: AesKey,
+}
+
+/// Hand-encoded [`PerformOpResponse`] data for [`AidlErrorCode::InternalError`].
+/// Does not perform CBOR serialization (and so is suitable for error reporting if/when
+/// CBOR serialization fails).
+// TODO: add a unit test that confirms that this hand-encoded data is correct
+fn invalid_cbor_rsp_data() -> [u8; 3] {
+    [
+        0x82, // 2-arr
+        0x02, // int, value 2
+        0x60, // 0-tstr
+    ]
 }
