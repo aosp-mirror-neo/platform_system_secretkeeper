@@ -20,6 +20,7 @@ rust_library {
     name: "libsecretkeeper_core_nostd",
     crate_name: "secretkeeper_core",
     srcs: ["src/lib.rs"],
+    lints: "android",
     vendor_available: true,
     defaults: [
         "authgraph_use_latest_hal_aidl_rust",
