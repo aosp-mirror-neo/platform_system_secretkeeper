@@ -79,6 +79,8 @@ pub enum Error {
     ConversionError,
     /// These are unexpected errors, which should never really happen.
     UnexpectedError,
+    /// Sequence number has reached the upper limit.
+    SequenceNumberExhausted,
 }
 
 impl From<ciborium::value::Error> for Error {

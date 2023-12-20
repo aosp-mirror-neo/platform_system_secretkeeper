@@ -27,7 +27,7 @@ use secretkeeper_comm::data_types::request_response_impl::{
     StoreSecretResponse,
 };
 use secretkeeper_comm::data_types::response::Response;
-use secretkeeper_comm::data_types::{Id, Secret};
+use secretkeeper_comm::data_types::{Id, Secret, SeqNum};
 
 #[cfg(test)]
 rdroidtest::test_main!();
@@ -247,6 +247,17 @@ mod tests {
             <SecretkeeperError as Response>::new(vec![Value::from(ERROR_OK)]).unwrap_err(),
             Error::ResponseMalformed
         );
+    }
+
+    test!(seq_num_test);
+    fn seq_num_test() {
+        let mut seq_b = SeqNum::new();
+        let mut seq_a = SeqNum::new();
+        assert_eq!(seq_a.get_then_increment().unwrap(), seq_b.get_then_increment().unwrap());
+        let _ = seq_a.get_then_increment().unwrap();
+        assert_ne!(seq_a.get_then_increment().unwrap(), seq_b.get_then_increment().unwrap());
+        let _ = seq_b.get_then_increment().unwrap();
+        assert_eq!(seq_a.get_then_increment().unwrap(), seq_b.get_then_increment().unwrap());
     }
 
     fn ex_id_bytes() -> Vec<u8> {
