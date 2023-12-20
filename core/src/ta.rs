@@ -20,7 +20,6 @@ use crate::cipher;
 use crate::store::{KeyValueStore, PolicyGatedStorage};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
-use alloc::string::ToString;
 use alloc::vec::Vec;
 use authgraph_core::ag_err;
 use authgraph_core::error::Error;
@@ -42,6 +41,7 @@ use secretkeeper_comm::data_types::{
         StoreSecretRequest, StoreSecretResponse,
     },
     response::Response,
+    Id,
 };
 use secretkeeper_comm::wire::{
     AidlErrorCode, ApiError, PerformOpReq, PerformOpResponse, PerformOpSuccessRsp, SecretId,
@@ -186,14 +186,17 @@ impl SecretkeeperTa {
     }
 
     fn delete_ids(&mut self, ids: Vec<SecretId>) -> Result<(), ApiError> {
-        Err(ApiError {
-            err_code: AidlErrorCode::InternalError,
-            msg: alloc::format!("TODO with {ids:?}"),
-        })
+        for id in ids {
+            self.store
+                .delete(&Id(id))
+                .map_err(|e| aidl_err!(InternalError, "failed to delete id: {e:?}"))?;
+        }
+        Ok(())
     }
 
     fn delete_all(&mut self) -> Result<(), ApiError> {
-        Err(ApiError { err_code: AidlErrorCode::InternalError, msg: "TODO".to_string() })
+        warn!("deleting all Secretkeeper secrets");
+        self.store.delete_all().map_err(|e| aidl_err!(InternalError, "failed to delete all: {e:?}"))
     }
 
     fn secret_management(&mut self, encrypt0: &[u8]) -> Result<Vec<u8>, ApiError> {
