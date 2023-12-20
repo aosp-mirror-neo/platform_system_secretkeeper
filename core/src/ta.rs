@@ -41,7 +41,7 @@ use secretkeeper_comm::data_types::{
         StoreSecretRequest, StoreSecretResponse,
     },
     response::Response,
-    Id,
+    Id, SeqNum,
 };
 use secretkeeper_comm::wire::{
     AidlErrorCode, ApiError, PerformOpReq, PerformOpResponse, PerformOpSuccessRsp, SecretId,
@@ -95,8 +95,8 @@ pub struct SecretkeeperTa {
     /// Secretkeeper identity.
     identity: Option<Identity>,
 
-    /// Current session keys.
-    session_keys: VecDeque<SessionKeyInfo>,
+    /// Current sessions.
+    session_artifacts: VecDeque<SessionArtifacts>,
 
     /// Storage of secrets (& sealing policy)
     store: PolicyGatedStorage,
@@ -140,7 +140,7 @@ impl SecretkeeperTa {
             per_boot_key,
             identity_sign_key: Some(identity_sign_key),
             identity: Some(identity),
-            session_keys: VecDeque::new(),
+            session_artifacts: VecDeque::new(),
             store,
         })
     }
@@ -199,8 +199,14 @@ impl SecretkeeperTa {
         self.store.delete_all().map_err(|e| aidl_err!(InternalError, "failed to delete all: {e:?}"))
     }
 
+    // "SSL added and removed here :-)"
     fn secret_management(&mut self, encrypt0: &[u8]) -> Result<Vec<u8>, ApiError> {
-        let (req, session_keys) = self.decrypt_request(encrypt0)?;
+        let encrypt0 = CoseEncrypt0::from_slice(encrypt0)
+            .map_err(|_e| aidl_err!(RequestMalformed, "malformed COSE_Encrypt0"))?;
+        let kid: &[u8; SESSION_ID_LEN] = key_id(&encrypt0)
+            .try_into()
+            .map_err(|e| aidl_err!(RequestMalformed, "session key of unexpected size: {e:?}"))?;
+        let req = self.decrypt_request(&encrypt0, kid)?;
         let result = self.process_inner(&req);
 
         // An inner failure still converts to a response message that gets encrypted.
@@ -211,7 +217,7 @@ impl SecretkeeperTa {
                 .to_vec()
                 .map_err(|_e| aidl_err!(InternalError, "failed to encode err rsp"))?,
         };
-        self.encrypt_response(&session_keys, &rsp_data)
+        self.encrypt_response(&rsp_data, kid)
     }
 
     fn process_inner(&mut self, req: &[u8]) -> Result<Vec<u8>, SecretkeeperError> {
@@ -270,33 +276,45 @@ impl SecretkeeperTa {
         Ok(response.serialize_to_packet())
     }
 
-    // "SSL added and removed here :-)"
-    fn keys_for_session(&self, session_id: &[u8; SESSION_ID_LEN]) -> Option<&SessionKeyInfo> {
-        self.session_keys.iter().find(|info| info.session_id == *session_id)
+    fn keys_for_session(
+        &mut self,
+        session_id: &[u8; SESSION_ID_LEN],
+    ) -> Option<&mut SessionArtifacts> {
+        self.session_artifacts.iter_mut().find(|info| info.session_keys.session_id == *session_id)
     }
-    fn decrypt_request(&self, req: &[u8]) -> Result<(Vec<u8>, SessionKeyInfo), ApiError> {
-        let encrypt0 = CoseEncrypt0::from_slice(req)
-            .map_err(|_e| aidl_err!(RequestMalformed, "malformed COSE_Encrypt0"))?;
-        let session_keys = self
-            .keys_for_session(&encrypt0.protected.header.key_id[..].try_into().map_err(|e| {
-                aidl_err!(RequestMalformed, "session key of unexpected size: {e:?}")
-            })?)
-            .ok_or_else(|| aidl_err!(UnknownKeyId, "session key not found"))?;
-        let payload = cipher::decrypt_message(&*self.aes_gcm, &session_keys.recv_key, &encrypt0)?;
-        Ok((payload, session_keys.clone()))
-    }
-    fn encrypt_response(
-        &self,
-        session_keys: &SessionKeyInfo,
-        rsp: &[u8],
+
+    fn decrypt_request(
+        &mut self,
+        encrypt0: &CoseEncrypt0,
+        kid: &[u8; SESSION_ID_LEN],
     ) -> Result<Vec<u8>, ApiError> {
-        cipher::encrypt_message(
-            &*self.aes_gcm,
-            &*self.rng,
-            &session_keys.send_key,
-            &session_keys.session_id,
-            rsp,
-        )
+        let session_artifacts = self
+            .keys_for_session(kid)
+            .ok_or_else(|| aidl_err!(UnknownKeyId, "session info not found"))?;
+
+        let seq_num_incoming =
+            session_artifacts.seq_num_incoming.get_then_increment().map_err(|e| {
+                aidl_err!(InternalError, "Couldn't get the expected request seq_num: {e:?}")
+            })?;
+        let recv_key: &AesKey = &session_artifacts.session_keys.recv_key.clone();
+
+        cipher::decrypt_message(self.aes_gcm.as_ref(), recv_key, encrypt0, &seq_num_incoming)
+    }
+
+    fn encrypt_response(
+        &mut self,
+        rsp: &[u8],
+        kid: &[u8; SESSION_ID_LEN],
+    ) -> Result<Vec<u8>, ApiError> {
+        let session_artifacts = self
+            .keys_for_session(kid)
+            .ok_or_else(|| aidl_err!(UnknownKeyId, "session info not found"))?;
+        let seq_num_outgoing = session_artifacts
+            .seq_num_outgoing
+            .get_then_increment()
+            .map_err(|e| aidl_err!(InternalError, "Couldn't get a seq number: {e:?}"))?;
+        let send_key: &AesKey = &session_artifacts.session_keys.send_key.clone();
+        cipher::encrypt_message(&*self.aes_gcm, &*self.rng, send_key, kid, rsp, &seq_num_outgoing)
     }
 }
 
@@ -347,9 +365,9 @@ impl Device for SecretkeeperTa {
         shared_keys: &[Vec<u8>; 2],
         _sha256: &dyn Sha256,
     ) -> Result<(), Error> {
-        if self.session_keys.len() >= MAX_SESSIONS {
+        if self.session_artifacts.len() >= MAX_SESSIONS {
             warn!("Dropping oldest session key");
-            self.session_keys.pop_front();
+            self.session_artifacts.pop_front();
         }
         let send_key =
             authgraph_core::arc::decipher_arc(&self.per_boot_key, &shared_keys[0], &*self.aes_gcm)?;
@@ -357,11 +375,15 @@ impl Device for SecretkeeperTa {
             authgraph_core::arc::decipher_arc(&self.per_boot_key, &shared_keys[1], &*self.aes_gcm)?;
 
         // We assume that the session ID is unique and not already present in `session_keys`.
-        self.session_keys.push_back(SessionKeyInfo {
-            _peer_identity: peer_identity.clone(),
-            session_id: *session_id,
-            send_key: send_key.payload.try_into()?,
-            recv_key: recv_key.payload.try_into()?,
+        self.session_artifacts.push_back(SessionArtifacts {
+            session_keys: AgSessionKeys {
+                _peer_identity: peer_identity.clone(),
+                session_id: *session_id,
+                send_key: send_key.payload.try_into()?,
+                recv_key: recv_key.payload.try_into()?,
+            },
+            seq_num_outgoing: SeqNum::new(),
+            seq_num_incoming: SeqNum::new(),
         });
         Ok(())
     }
@@ -378,14 +400,27 @@ impl Device for SecretkeeperTa {
     }
 }
 
-#[derive(Clone)]
-struct SessionKeyInfo {
+fn key_id(encrypted_packet: &CoseEncrypt0) -> &[u8] {
+    &encrypted_packet.protected.header.key_id
+}
+
+// In addition to session_keys (received from authgraph key exchange protocol), Secretkeeper
+// session maintains sequence_numbers. These change within session (for each message).
+// Avoid cloning!
+struct SessionArtifacts {
+    session_keys: AgSessionKeys,
+    // Sequence number to be used in next outgoing message encryption.
+    seq_num_outgoing: SeqNum,
+    // Sequence number to be used for decrypting the next incoming message.
+    seq_num_incoming: SeqNum,
+}
+
+struct AgSessionKeys {
     _peer_identity: Identity,
     session_id: [u8; 32],
     send_key: AesKey,
     recv_key: AesKey,
 }
-
 /// Hand-encoded [`PerformOpResponse`] data for [`AidlErrorCode::InternalError`].
 /// Does not perform CBOR serialization (and so is suitable for error reporting if/when
 /// CBOR serialization fails).
