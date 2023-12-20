@@ -56,9 +56,9 @@ impl PolicyGatedStorage {
     /// Store or update a secret (only if the stored policy allows access to client).
     ///
     /// # Arguments
-    /// * `id`: Unique identifier of the [`secret`]. A client is allowed to have multiple entries
-    ///    each with a distinct `id`. If an entry corresponding to [`id`] is already present AND
-    ///    [`dice_chain`] matches the (already present) [`sealing_policy`] -> update the
+    /// * `id`: Unique identifier of the `secret`. A client is allowed to have multiple entries
+    ///    each with a distinct `id`. If an entry corresponding to `id` is already present AND
+    ///    `dice_chain` matches the (already present) `sealing_policy` -> update the
     ///    corresponding [`Secret`] & its `sealing_policy`.
     ///
     /// * `secret`: The [`Secret`] the client wishes to store.
@@ -68,7 +68,7 @@ impl PolicyGatedStorage {
     ///
     /// * `dice_chain`: The serialized CBOR encoded Dice chain of the client, adhering to
     ///    Android Profile for DICE.
-    ///    https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md
+    ///    <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
     ///    This method verifies that the dice_chain matches the provided sealing_policy but does
     ///    not check that the dice chain indeed belongs to the client.
     ///    The caller must ensure that the dice chain indeed belongs to client.
@@ -112,7 +112,7 @@ impl PolicyGatedStorage {
     ///
     /// * `dice_chain`: The serialized CBOR encoded Dice chain of the client, adhering to
     ///    Android Profile for DICE.
-    ///    https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md
+    ///    <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
     ///    This method verifies that the dice_chain matches the provided sealing_policy but does
     ///    not check that the dice chain indeed belongs to the client. The caller must ensure that
     ///    the dice chain indeed belongs to client.
