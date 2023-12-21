@@ -28,6 +28,7 @@ use android_hardware_security_authgraph::aidl::android::hardware::security::auth
 };
 use coset::{CborSerializable, CoseEncrypt0};
 use secretkeeper_core::cipher;
+use secretkeeper_comm::data_types::SeqNum;
 use secretkeeper_comm::wire::ApiError;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,6 +40,11 @@ pub struct SkSession {
     encryption_key: key::AesKey,
     decryption_key: key::AesKey,
     session_id: Vec<u8>,
+    // We allow seq numbers to be 0 to u64::MAX-1, increment beyond that fails
+    // Sequence number for next outgoing message encryption.
+    seq_num_outgoing: SeqNum,
+    // Sequence number for decrypting the next incoming message.
+    seq_num_incoming: SeqNum,
 }
 
 impl SkSession {
@@ -46,28 +52,62 @@ impl SkSession {
     /// local `source` and remote `sink`.
     pub fn new(sk: binder::Strong<dyn ISecretkeeper>) -> Result<Self, Error> {
         let ([encryption_key, decryption_key], session_id) = authgraph_key_exchange(sk.clone())?;
-        Ok(Self { sk, encryption_key, decryption_key, session_id })
+        Ok(Self {
+            sk,
+            encryption_key,
+            decryption_key,
+            session_id,
+            seq_num_outgoing: SeqNum::new(),
+            seq_num_incoming: SeqNum::new(),
+        })
     }
 
     /// Wrapper around `ISecretkeeper::processSecretManagementRequest`. This additionally handles
     /// encryption and decryption.
-    pub fn secret_management_request(&self, req_data: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn secret_management_request(&mut self, req_data: &[u8]) -> Result<Vec<u8>, Error> {
         let aes_gcm = boring::BoringAes;
         let rng = boring::BoringRng;
+        let req_aad = self.seq_num_outgoing.get_then_increment()?;
         let request_bytes = cipher::encrypt_message(
             &aes_gcm,
             &rng,
             &self.encryption_key,
             &self.session_id,
             req_data,
+            &req_aad,
         )
         .map_err(Error::CipherError)?;
 
         let response_bytes = self.sk.processSecretManagementRequest(&request_bytes)?;
 
         let response_encrypt0 = CoseEncrypt0::from_slice(&response_bytes)?;
-        cipher::decrypt_message(&aes_gcm, &self.decryption_key, &response_encrypt0)
-            .map_err(Error::CipherError)
+        let expected_res_aad = self.seq_num_incoming.get_then_increment()?;
+        cipher::decrypt_message(
+            &aes_gcm,
+            &self.decryption_key,
+            &response_encrypt0,
+            &expected_res_aad,
+        )
+        .map_err(Error::CipherError)
+    }
+
+    /// Get the encryption key corresponding to the session. Note on usage: This (along with other
+    /// getters [`decryption_key()`] & [`session_id()`]) can be used for custom encrypting requests
+    /// (for ex, with different aad, instead of using [`secret_management_request`] method.
+    /// In that case, seq_num_outgoing & seq_num_incoming will be out of sync. Recommended use for
+    /// testing only.
+    pub fn encryption_key(&self) -> &key::AesKey {
+        &self.encryption_key
+    }
+
+    /// Get the decryption key corresponding to the session.
+    pub fn decryption_key(&self) -> &key::AesKey {
+        &self.decryption_key
+    }
+
+    /// Get the session_id.
+    pub fn session_id(&self) -> &[u8] {
+        &self.session_id
     }
 }
 
@@ -84,6 +124,8 @@ pub enum Error {
     CoseError(coset::CoseError),
     /// Unexpected item encountered (got, want).
     UnexpectedItem(&'static str, &'static str),
+    /// The set of errors from secretkeeper_comm library.
+    SkCommError(secretkeeper_comm::data_types::error::Error),
 }
 
 impl From<authgraph_core::error::Error> for Error {
@@ -101,6 +143,12 @@ impl From<binder::Status> for Error {
 impl From<coset::CoseError> for Error {
     fn from(e: coset::CoseError) -> Self {
         Self::CoseError(e)
+    }
+}
+
+impl From<secretkeeper_comm::data_types::error::Error> for Error {
+    fn from(e: secretkeeper_comm::data_types::error::Error) -> Self {
+        Self::SkCommError(e)
     }
 }
 
