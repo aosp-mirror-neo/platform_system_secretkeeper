@@ -25,6 +25,8 @@ pub mod packet;
 pub mod request;
 pub mod request_response_impl;
 pub mod response;
+use crate::data_types::error::Error;
+use alloc::vec::Vec;
 use ciborium::Value;
 use coset::{AsCborValue, CborSerializable, CoseError};
 use zeroize::ZeroizeOnDrop;
@@ -81,5 +83,24 @@ impl CborSerializable for Secret {}
 impl core::fmt::Debug for Secret {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Sensitive information omitted")
+    }
+}
+
+/// Used to represent [`RequestSeqNum`] & [`ResponseSeqNum`] in SecretManagement.cddl
+#[derive(Default)]
+pub struct SeqNum(u64);
+
+impl SeqNum {
+    /// Construct a new SeqNum. All new instances start with 0
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    /// Get the encoded SeqNum & increment the underlying integer by +1. This method uses
+    /// `u64::checked_add`, thereby preventing wrapping around of SeqNum.
+    pub fn get_then_increment(&mut self) -> Result<Vec<u8>, Error> {
+        let enc = Value::Integer(self.0.into()).to_vec().map_err(|_| Error::ConversionError)?;
+        self.0 = self.0.checked_add(1).ok_or(Error::SequenceNumberExhausted)?;
+        Ok(enc)
     }
 }
