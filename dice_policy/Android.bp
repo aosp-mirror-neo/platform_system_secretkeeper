@@ -12,6 +12,7 @@ rust_defaults {
     rustlibs: [
         "libciborium",
         "libcoset",
+        "liblog_rust",
     ],
     proc_macros: ["libenumn"],
     vendor_available: true,
