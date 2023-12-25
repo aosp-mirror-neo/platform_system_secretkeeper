@@ -100,12 +100,15 @@ pub struct ConstraintSpec {
     // path is essentially a list of label/int.
     // It identifies which entry (in a dice node) to be applying constraints on.
     path: Vec<i64>,
+    // If set to true, the constraint is skipped if the `path` is missing in a dice node
+    // while constructing a policy. Note that this does not affect policy matching.
+    optional: bool,
 }
 
 impl ConstraintSpec {
     /// Construct the ConstraintSpec.
-    pub fn new(constraint_type: ConstraintType, path: Vec<i64>) -> Result<Self, Error> {
-        Ok(ConstraintSpec { constraint_type, path })
+    pub fn new(constraint_type: ConstraintType, path: Vec<i64>, optional: bool) -> Self {
+        Self { constraint_type, path, optional }
     }
 }
 
@@ -256,7 +259,10 @@ impl DicePolicy {
         for (n, value) in it.enumerate() {
             let entry = cbor_value_from_cose_sign(value)
                 .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?;
-            constraints_list.push(payload_to_constraints(entry, constraint_spec)?);
+            constraints_list.push(
+                payload_to_constraints(entry, constraint_spec)
+                    .map_err(|e| format!("Unable to get constraints for payload at {n}: {e:?}"))?,
+            );
         }
 
         Ok(DicePolicy {
@@ -307,7 +313,8 @@ fn check_constraints_on_node(
 
 fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Result<(), Error> {
     let Constraint(cons_type, path, value_in_constraint) = constraint;
-    let value_in_node = lookup_value_in_nested_map(dice_node, path)?;
+    let value_in_node = lookup_value_in_nested_map(dice_node, path)?
+        .ok_or(format!("Value not found for constraint_path {path:?})"))?;
     match ConstraintType::n(*cons_type).ok_or("Unexpected Constraint type")? {
         ConstraintType::ExactMatch => {
             if value_in_node != *value_in_constraint {
@@ -333,7 +340,9 @@ fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Resul
     Ok(())
 }
 
-// Take the payload of a dice node & construct the constraints on it.
+// Take the ['payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
+// corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
+// optional, the corresponding constraint will be missing from the NodeConstraints.
 fn payload_to_constraints(
     payload: Value,
     constraint_spec: &[ConstraintSpec],
@@ -344,11 +353,24 @@ fn payload_to_constraints(
         if constraint_path.is_empty() {
             return Err("Expected non-empty key spec".to_string());
         }
-        let val = lookup_value_in_nested_map(&payload, &constraint_path).map_err(|e| {
-            format!("Value not found for constraint_path {constraint_path:?}: {e:?}")
-        })?;
-        let constraint = Constraint(constraint_item.constraint_type as u16, constraint_path, val);
-        node_constraints.push(constraint);
+        match lookup_value_in_nested_map(&payload, &constraint_path)? {
+            Some(val) => {
+                let constraint =
+                    Constraint(constraint_item.constraint_type as u16, constraint_path, val);
+                node_constraints.push(constraint);
+            }
+            None => {
+                if constraint_item.optional {
+                    log::warn!(
+                        "Value not found for an optional constraint {constraint_path:?}, skipping!"
+                    )
+                } else {
+                    return Err(format!(
+                        "Value not found for non-optional constraint: {constraint_path:?}"
+                    ));
+                }
+            }
+        }
     }
     Ok(NodeConstraints(node_constraints.into_boxed_slice()))
 }
@@ -356,14 +378,16 @@ fn payload_to_constraints(
 // Lookup value corresponding to constraint path in nested map.
 // This function recursively calls itself.
 // The depth of recursion is limited by the size of constraint_path.
-fn lookup_value_in_nested_map(cbor_map: &Value, constraint_path: &[i64]) -> Result<Value, Error> {
+fn lookup_value_in_nested_map(
+    cbor_map: &Value,
+    constraint_path: &[i64],
+) -> Result<Option<Value>, Error> {
     if constraint_path.is_empty() {
-        return Ok(cbor_map.clone());
+        return Ok(Some(cbor_map.clone()));
     }
     let explicit_map = get_map_from_value(cbor_map)?;
-    let val = lookup_value_in_map(&explicit_map, constraint_path[0])
-        .ok_or_else(|| format!("Value not found for constraint key: {:?}", constraint_path[0]))?;
-    lookup_value_in_nested_map(val, &constraint_path[1..])
+    lookup_value_in_map(&explicit_map, constraint_path[0])
+        .map_or_else(|| Ok(None), |val| lookup_value_in_nested_map(val, &constraint_path[1..]))
 }
 
 fn get_map_from_value(cbor_map: &Value) -> Result<Cow<Vec<(Value, Value)>>, Error> {
@@ -445,6 +469,8 @@ mod tests {
     const AUTHORITY_HASH: i64 = -4670549;
     const CONFIG_DESC: i64 = -4670548;
     const COMPONENT_NAME: i64 = -70002;
+    const COMPONENT_VERSION: i64 = -70003;
+    const SECURITY_VERSION: i64 = -70005;
     const KEY_MODE: i64 = -4670551;
 
     // Helper struct to encapsulate artifacts that are useful for unit tests.
@@ -483,10 +509,10 @@ mod tests {
             // which are also hardcoded within the get_dice_chain_helper.
 
             let constraint_spec = vec![
-                ConstraintSpec::new(ConstraintType::ExactMatch, vec![1]).unwrap(),
+                ConstraintSpec::new(ConstraintType::ExactMatch, vec![1], false),
                 // Notice how key "2" is (deliberately) absent in ConstraintSpec
                 // so policy should not constrain it.
-                ConstraintSpec::new(ConstraintType::GreaterOrEqual, vec![3, 100]).unwrap(),
+                ConstraintSpec::new(ConstraintType::GreaterOrEqual, vec![3, 100], false),
             ];
             let expected_dice_policy = DicePolicy {
                 version: 1,
@@ -612,6 +638,34 @@ mod tests {
         );
     }
 
+    test!(policy_constructional_non_optional_constraint);
+    fn policy_constructional_non_optional_constraint() {
+        let mut example = TestArtifacts::get_example();
+        // The constraint_path [9,8,7] is not present in example.input_dice
+        example.constraint_spec.push(ConstraintSpec::new(
+            ConstraintType::ExactMatch,
+            vec![9, 8, 7],
+            /*optional*/ false,
+        ));
+        assert!(
+            DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).is_err(),
+            "DicePolicy creation should've failed on non-optional constraint"
+        );
+    }
+
+    test!(policy_constructional_optional_constraint);
+    fn policy_constructional_optional_constraint() {
+        let mut example = TestArtifacts::get_example();
+        // The constraint_path [9,8,7] is not present in example.input_dice
+        example.constraint_spec.push(ConstraintSpec::new(
+            ConstraintType::ExactMatch,
+            vec![9, 8, 7],
+            /*optional*/ true,
+        ));
+        // However for optional constraint, policy construction should succeed!
+        _ = DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).unwrap()
+    }
+
     test!(policy_dice_size_is_same);
     fn policy_dice_size_is_same() {
         // This is the number of certs in compos bcc (including the first ROT)
@@ -620,13 +674,28 @@ mod tests {
         let compos_dice_chain_size: usize = 5;
         let input_dice = include_bytes!("../testdata/composbcc");
         let constraint_spec = [
-            ConstraintSpec::new(ConstraintType::ExactMatch, vec![AUTHORITY_HASH]).unwrap(),
-            ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE]).unwrap(),
-            ConstraintSpec::new(ConstraintType::GreaterOrEqual, vec![CONFIG_DESC, COMPONENT_NAME])
-                .unwrap(),
+            ConstraintSpec::new(ConstraintType::ExactMatch, vec![AUTHORITY_HASH], false),
+            ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE], false),
+            ConstraintSpec::new(
+                ConstraintType::ExactMatch,
+                vec![CONFIG_DESC, COMPONENT_NAME],
+                false,
+            ),
+            ConstraintSpec::new(
+                ConstraintType::GreaterOrEqual,
+                vec![CONFIG_DESC, COMPONENT_VERSION],
+                true,
+            ),
+            ConstraintSpec::new(
+                ConstraintType::GreaterOrEqual,
+                vec![CONFIG_DESC, SECURITY_VERSION],
+                true,
+            ),
         ];
         let policy = DicePolicy::from_dice_chain(input_dice, &constraint_spec).unwrap();
         assert_eq!(policy.node_constraints_list.len(), compos_dice_chain_size);
+        // Check that original dice chain matches the policy.
+        policy.matches_dice_chain(input_dice).unwrap();
     }
 
     /// Encodes a ciborium::Value into bytes.

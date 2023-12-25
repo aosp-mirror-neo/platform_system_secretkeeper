@@ -333,15 +333,12 @@ impl Device for SecretkeeperTa {
                 .ok_or_else(|| ag_err!(InternalError, "Secretkeeper identity not available!"))?,
         ))
     }
-    fn get_cose_sign_algorithm(&self) -> iana::Algorithm {
+    fn get_cose_sign_algorithm(&self) -> Result<iana::Algorithm, Error> {
         match &self.identity_sign_key {
-            Some(EcSignKey::Ed25519(_)) => iana::Algorithm::EdDSA,
-            Some(EcSignKey::P256(_)) => iana::Algorithm::ES256,
-            Some(EcSignKey::P384(_)) => iana::Algorithm::ES384,
-            _ => {
-                error!("Unknown COSE_Sign algorithm");
-                iana::Algorithm::ES256
-            }
+            Some(EcSignKey::Ed25519(_)) => Ok(iana::Algorithm::EdDSA),
+            Some(EcSignKey::P256(_)) => Ok(iana::Algorithm::ES256),
+            Some(EcSignKey::P384(_)) => Ok(iana::Algorithm::ES384),
+            _ => Err(ag_err!(InternalError, "Cose sign algorithm not available")),
         }
     }
 
