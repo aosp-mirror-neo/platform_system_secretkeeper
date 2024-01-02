@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Implementation of a SecretKeeper trusted application (TA).
+//! Implementation of a Secretkeeper trusted application (TA).
 
 use crate::cipher;
 use crate::store::{KeyValueStore, PolicyGatedStorage};
@@ -53,7 +53,7 @@ const CURRENT_VERSION: u64 = 1;
 /// Maximum number of live session keys.
 const MAX_SESSIONS: usize = 32;
 
-// TODO: Remove the hypothetical dice chain, we will need dice chain, alongwith secrets for
+// TODO: Remove the hypothetical DICE chain, we will need DICE chain, alongwith secrets for
 // signing it for testing.
 // Developer note: I've got this chain by patching libdice_policy such that it dumps the
 // dice_policy corresponding to a hypothetical dice_chain (which is hard-coded input in
@@ -267,7 +267,7 @@ impl SecretkeeperTa {
             .map_err(|_| SecretkeeperError::RequestMalformed)?;
         let secret = self.store.get(
             &request.id,
-            // TODO(b/291228560): Dice chain should be received during AuthgraphKeyExchange
+            // TODO(b/291228560): DICE chain should be received during AuthgraphKeyExchange
             // instead of being hard-coded.
             &HYPOTHETICAL_DICE_CHAIN,
             request.updated_sealing_policy,
@@ -401,8 +401,8 @@ fn key_id(encrypted_packet: &CoseEncrypt0) -> &[u8] {
     &encrypted_packet.protected.header.key_id
 }
 
-// In addition to session_keys (received from authgraph key exchange protocol), Secretkeeper
-// session maintains sequence_numbers. These change within session (for each message).
+// In addition to `session_keys` (received from authgraph key exchange protocol), Secretkeeper
+// session maintains `sequence_numbers`. These change within session (for each message).
 // Avoid cloning!
 struct SessionArtifacts {
     session_keys: AgSessionKeys,
@@ -418,14 +418,31 @@ struct AgSessionKeys {
     send_key: AesKey,
     recv_key: AesKey,
 }
+
 /// Hand-encoded [`PerformOpResponse`] data for [`AidlErrorCode::InternalError`].
 /// Does not perform CBOR serialization (and so is suitable for error reporting if/when
 /// CBOR serialization fails).
-// TODO: add a unit test that confirms that this hand-encoded data is correct
 fn invalid_cbor_rsp_data() -> [u8; 3] {
     [
         0x82, // 2-arr
         0x02, // int, value 2
         0x60, // 0-tstr
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secretkeeper_comm::wire::{AidlErrorCode, ApiError, PerformOpResponse};
+
+    #[test]
+    fn test_invalid_data() {
+        // Cross-check that the hand-encoded invalid CBOR data matches an auto-encoded equivalent.
+        let rsp = PerformOpResponse::Failure(ApiError {
+            err_code: AidlErrorCode::InternalError,
+            msg: alloc::string::String::new(),
+        });
+        let rsp_data = rsp.to_vec().unwrap();
+        assert_eq!(rsp_data, invalid_cbor_rsp_data());
+    }
 }
