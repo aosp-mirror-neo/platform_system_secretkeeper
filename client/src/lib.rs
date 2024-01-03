@@ -17,7 +17,11 @@
 //! It encapsulates the Cryptography! AuthgraphKeyExchange is triggered on creation of a session
 //! and the messages is encrypted/decrypted using the shared keys.
 
+mod authgraph_dev;
 pub mod dice;
+
+use crate::authgraph_dev::AgDevice;
+use crate::dice::OwnedDiceArtifactsWithExplicitKey;
 
 use authgraph_boringssl as boring;
 use authgraph_core::keyexchange as ke;
@@ -52,8 +56,13 @@ pub struct SkSession {
 impl SkSession {
     /// Create a new Secretkeeper session. This triggers an AuthgraphKeyExchange protocol with a
     /// local `source` and remote `sink`.
-    pub fn new(sk: binder::Strong<dyn ISecretkeeper>) -> Result<Self, Error> {
-        let ([encryption_key, decryption_key], session_id) = authgraph_key_exchange(sk.clone())?;
+    pub fn new(
+        sk: binder::Strong<dyn ISecretkeeper>,
+        dice: &OwnedDiceArtifactsWithExplicitKey,
+    ) -> Result<Self, Error> {
+        let ag_dev = Rc::new(RefCell::new(AgDevice::new(dice)?));
+        let ([encryption_key, decryption_key], session_id) =
+            authgraph_key_exchange(sk.clone(), ag_dev.clone())?;
         Ok(Self {
             sk,
             encryption_key,
@@ -174,14 +183,13 @@ impl From<secretkeeper_comm::data_types::error::Error> for Error {
 /// Perform AuthGraph key exchange, returning the session keys and session ID.
 fn authgraph_key_exchange(
     sk: binder::Strong<dyn ISecretkeeper>,
+    ag_dev: Rc<RefCell<AgDevice>>,
 ) -> Result<([key::AesKey; 2], Vec<u8>), Error> {
     let sink = sk.getAuthGraphKe()?;
     let mut source = ke::AuthGraphParticipant::new(
         boring::crypto_trait_impls(),
-        // TODO(b/291213394): Don't use test device implementation, implement the trait!
-        Rc::new(RefCell::new(boring::test_device::AgDevice::default())),
-        // Each SkSession supports only 1 open Authgraph session.
-        1,
+        ag_dev,
+        1, // Each SkSession supports only 1 open Authgraph session.
     )?;
     key_exchange(&mut source, sink)
 }
@@ -230,7 +238,7 @@ fn key_exchange(
         .try_into()
         .map_err(|_| Error::UnexpectedItem("Array", "Array of size 2"))?;
 
-    Ok((decrypted_shared_keys_array, sink_info.sessionId))
+    Ok((decrypted_shared_keys_array, source_info.session_id))
 }
 
 fn build_plain_pub_key(pub_key: &Option<Vec<u8>>) -> Result<PubKey, Error> {

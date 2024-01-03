@@ -30,6 +30,7 @@ rust_defaults {
     rustlibs: [
         "libauthgraph_core",
         "libauthgraph_boringssl",
+        "libauthgraph_wire",
         "libbinder_rs",
         "libciborium",
         "libcoset",
