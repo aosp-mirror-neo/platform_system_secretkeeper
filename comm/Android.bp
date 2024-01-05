@@ -45,7 +45,7 @@ rust_test {
         "libsecretkeeper_comm.defaults",
         "rdroidtest.defaults",
     ],
-    srcs: ["tests/*.rs"],
+    srcs: ["tests/tests.rs"],
     test_suites: ["general-tests"],
     rustlibs: [
         "libsecretkeeper_comm_nostd",
