@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! This library exposes implementation of a SecretKeeper trusted application (TA).
+//! This library exposes implementation of a Secretkeeper trusted application (TA).
 //! This is compatible with Secretkeeper HAL specification.
 
 #![no_std]

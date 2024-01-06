@@ -26,7 +26,7 @@ use enumn::N;
 
 /// Wrapper type for communicating requests between the HAL service and the TA.
 /// This is an internal implementation detail, and is not visible on the API.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerformOpReq {
     /// A secret management request holds a CBOR-encoded `COSE_Encrypt0`.
     SecretManagement(Vec<u8>),
@@ -130,7 +130,7 @@ impl AsCborValue for OpCode {
 
 /// Wrapper type for communicating responses between the HAL service and the TA.
 /// This is an internal implementation detail, and is not visible on the API.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerformOpResponse {
     Success(PerformOpSuccessRsp),
     Failure(ApiError),
@@ -230,7 +230,7 @@ pub fn cbor_type_error<T>(got: &Value, want: &'static str) -> Result<T, CoseErro
 pub type SecretId = [u8; 64];
 
 /// Error information reported visibly on the external API.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiError {
     pub err_code: AidlErrorCode,
     pub msg: String,
@@ -240,7 +240,7 @@ pub struct ApiError {
 /// Keep in sync with the ERROR_ codes in:
 /// hardware/interfaces/security/secretkeeper/aidl/
 ///   android/hardware/security/secretkeeper/ISecretkeeper.aidl
-#[derive(Debug, Clone, Copy, N)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, N)]
 pub enum AidlErrorCode {
     Ok = 0,
     UnknownKeyId = 1,

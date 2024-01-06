@@ -86,7 +86,7 @@ impl core::fmt::Debug for Secret {
     }
 }
 
-/// Used to represent [`RequestSeqNum`] & [`ResponseSeqNum`] in SecretManagement.cddl
+/// Used to represent `RequestSeqNum` & `ResponseSeqNum` in SecretManagement.cddl
 #[derive(Default)]
 pub struct SeqNum(u64);
 
