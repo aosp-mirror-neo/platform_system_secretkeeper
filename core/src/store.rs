@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! This library exposes PolicyGatedStorage and related traits that are useful for
+//! This library exposes [`PolicyGatedStorage`] and related traits that are useful for
 //! Secretkeeper service implementation.
 
 use alloc::boxed::Box;
@@ -28,19 +28,18 @@ use log::info;
 use secretkeeper_comm::data_types::error::{Error, SecretkeeperError};
 use secretkeeper_comm::data_types::{Id, Secret};
 
-/// PolicyGatedStorage encapsulates the storage layer of Secretkeeper, which, in addition to
-/// conventional storage, provides dice policy based access control.
-/// A client can restrict the access to its stored entry.
+/// `PolicyGatedStorage` encapsulates the storage layer of Secretkeeper, which, in addition to
+/// conventional storage, provides DICE policy based access control.  A client can restrict the
+/// access to its stored entry.
 ///
-/// 1) Storage: PolicyGatedStorage allows storing a Secret (and sealing_policy) which is
-/// indexed by an Id. Under the hood, it uses a Key-Value based storage, which should be provided
-/// on initialization.
-/// The security properties (Confidentiality/Integrity/Persistence) expected from the Storage are
-/// listed in ISecretkeeper.aidl
+/// 1) Storage: `PolicyGatedStorage` allows storing a Secret (and sealing_policy) which is indexed
+/// by an [`Id`]. Under the hood, it uses a Key-Value based storage, which should be provided on
+/// initialization.  The security properties (Confidentiality/Integrity/Persistence) expected from
+/// the Storage are listed in ISecretkeeper.aidl
 ///
-/// 2) Access control: Secretkeeper uses Dice policy based access control. Each secret is
-/// associated with a sealing_policy, which is a dice policy. This is a required input while
-/// storing a secret. Further access to this secret is restricted to clients whose dice chain
+/// 2) Access control: Secretkeeper uses DICE policy based access control. Each secret is
+/// associated with a sealing_policy, which is a DICE policy. This is a required input while
+/// storing a secret. Further access to this secret is restricted to clients whose DICE chain
 /// adheres to the sealing_policy.
 pub struct PolicyGatedStorage {
     secure_store: Box<dyn KeyValueStore>,
@@ -63,15 +62,15 @@ impl PolicyGatedStorage {
     ///
     /// * `secret`: The [`Secret`] the client wishes to store.
     ///
-    /// * `sealing_policy`: The dice policy corresponding to the secret. Only clients with dice
+    /// * `sealing_policy`: The DICE policy corresponding to the secret. Only clients with DICE
     ///    chain that matches the sealing_policy are allowed to access Secret.
     ///
-    /// * `dice_chain`: The serialized CBOR encoded Dice chain of the client, adhering to
+    /// * `dice_chain`: The serialized CBOR encoded DICE chain of the client, adhering to
     ///    Android Profile for DICE.
     ///    <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
     ///    This method verifies that the dice_chain matches the provided sealing_policy but does
-    ///    not check that the dice chain indeed belongs to the client.
-    ///    The caller must ensure that the dice chain indeed belongs to client.
+    ///    not check that the DICE chain indeed belongs to the client.
+    ///    The caller must ensure that the DICE chain indeed belongs to client.
     pub fn store(
         &mut self,
         id: Id,
@@ -110,12 +109,12 @@ impl PolicyGatedStorage {
     /// # Arguments
     /// * `id`: Unique identifier of the secret.
     ///
-    /// * `dice_chain`: The serialized CBOR encoded Dice chain of the client, adhering to
+    /// * `dice_chain`: The serialized CBOR encoded DICE chain of the client, adhering to
     ///    Android Profile for DICE.
     ///    <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
     ///    This method verifies that the dice_chain matches the provided sealing_policy but does
-    ///    not check that the dice chain indeed belongs to the client. The caller must ensure that
-    ///    the dice chain indeed belongs to client.
+    ///    not check that the DICE chain indeed belongs to the client. The caller must ensure that
+    ///    the DICE chain indeed belongs to client.
     ///
     /// * `updated_sealing_policy`: The updated dice_policy corresponding to the [`Secret`].
     ///    This is an optional parameter and can be used to replace the sealing_policy associated
@@ -189,7 +188,7 @@ fn sk_err<E: core::fmt::Debug>(sk_error: SecretkeeperError, err: E) -> Secretkee
 }
 
 // Entry describes the `value` stored in the Key-Value store by PolicyGatedStorage.
-// ```
+// ```cddl
 //  Entry = [
 //    secret : bstr .size 32,
 //    sealing_policy : bstr .cbor DicePolicy
@@ -198,7 +197,7 @@ fn sk_err<E: core::fmt::Debug>(sk_error: SecretkeeperError, err: E) -> Secretkee
 #[derive(Debug)]
 struct Entry {
     secret: Secret,
-    sealing_policy: Vec<u8>, // dice policy serialized into bytes
+    sealing_policy: Vec<u8>, // DicePolicy serialized into bytes
 }
 
 impl AsCborValue for Entry {
