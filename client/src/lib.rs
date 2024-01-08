@@ -130,6 +130,23 @@ pub enum Error {
     SkCommError(secretkeeper_comm::data_types::error::Error),
 }
 
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BinderStatus(e) => write!(f, "Binder error {e:?}"),
+            Self::AuthgraphError(e) => write!(f, "Local Authgraph instance error {e:?}"),
+            Self::CipherError(e) => write!(f, "Error in encryption/decryption of packets {e:?}"),
+            Self::CoseError(e) => write!(f, "Errors originating in the coset library {e:?}"),
+            Self::UnexpectedItem(got, want) => {
+                write!(f, "Unexpected item - Got:{got}, Expected:{want}")
+            }
+            Self::SkCommError(e) => write!(f, "secretkeeper_comm error: {e:?}"),
+        }
+    }
+}
+
 impl From<authgraph_core::error::Error> for Error {
     fn from(e: authgraph_core::error::Error) -> Self {
         Self::AuthgraphError(e)
