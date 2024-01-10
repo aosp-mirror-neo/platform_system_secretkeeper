@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use authgraph_core::ag_err;
 use authgraph_core::error::Error;
 use authgraph_core::key::{
-    AesKey, CertChain, EcSignKey, EcVerifyKey, Identity, IdentityVerificationDecision,
+    AesKey, CertChain, EcSignKey, Identity, IdentityVerificationDecision,
     EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION, IDENTITY_VERSION,
 };
 use authgraph_core::traits::{AesGcm, CryptoTraitImpl, Device, EcDsa, Rng, Sha256};
@@ -107,6 +107,7 @@ impl SecretkeeperTa {
     pub fn new(
         ag_impls: &mut CryptoTraitImpl,
         storage_impl: Box<dyn KeyValueStore>,
+        identity_curve: iana::EllipticCurve,
     ) -> Result<Self, SkInternalError> {
         // Create a per-boot-key for AuthGraph to use.
         let aes_gcm = ag_impls.aes_gcm.box_clone();
@@ -116,18 +117,16 @@ impl SecretkeeperTa {
             SkInternalError::UnexpectedError
         })?;
 
-        // TODO: replace with actual Secretkeeper identity and signing key.
-        let (priv_key, pub_key) =
-            authgraph_boringssl::ec::create_p256_key_pair(iana::Algorithm::ES256).map_err(|e| {
-                error!("Failed to generate P-256 keypair: {e:?}");
+        let (identity_sign_key, pub_key) =
+            ag_impls.ecdsa.generate_key(identity_curve).map_err(|e| {
+                error!("Failed to generate {identity_curve:?} keypair: {e:?}");
                 SkInternalError::UnexpectedError
             })?;
-        let identity_sign_key = EcSignKey::P256(priv_key);
         let identity = Identity {
             version: IDENTITY_VERSION,
             cert_chain: CertChain {
                 version: EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION,
-                root_key: EcVerifyKey::P256(pub_key),
+                root_key: pub_key,
                 dice_cert_chain: None,
             },
             policy: None,
