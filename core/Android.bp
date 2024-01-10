@@ -53,5 +53,8 @@ rust_test {
     defaults: [
         "libsecretkeeper_core_defaults",
     ],
+    rustlibs: [
+        "libhex",
+    ],
     test_suites: ["general-tests"],
 }

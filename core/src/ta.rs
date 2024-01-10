@@ -47,6 +47,8 @@ use secretkeeper_comm::wire::{
     AidlErrorCode, ApiError, PerformOpReq, PerformOpResponse, PerformOpSuccessRsp, SecretId,
 };
 
+pub mod bootloader;
+
 /// Current Secretkeeper version.
 const CURRENT_VERSION: u64 = 1;
 
@@ -90,10 +92,10 @@ pub struct SecretkeeperTa {
     per_boot_key: AesKey,
 
     /// The signing key corresponding to the leaf of the Secretkeeper identity DICE chain.
-    identity_sign_key: Option<EcSignKey>,
+    identity_sign_key: EcSignKey,
 
     /// Secretkeeper identity.
-    identity: Option<Identity>,
+    identity: Identity,
 
     /// Current sessions.
     session_artifacts: VecDeque<SessionArtifacts>,
@@ -137,11 +139,43 @@ impl SecretkeeperTa {
             aes_gcm,
             rng,
             per_boot_key,
-            identity_sign_key: Some(identity_sign_key),
-            identity: Some(identity),
+            identity_sign_key,
+            identity,
             session_artifacts: VecDeque::new(),
             store,
         })
+    }
+
+    /// Process a single serialized request from the bootloader, returning a serialized response
+    /// (even on failure).
+    pub fn process_bootloader(&self, req_data: &[u8]) -> Vec<u8> {
+        use bootloader as bl;
+        let req = match bl::Request::from_slice(req_data) {
+            Ok(req) => req,
+            Err(e) => {
+                error!("Failed to deserialize bootloader request: {e:?}");
+                return bl::Response::Error(bl::OpCode::Unknown, bl::ErrorCode::CborFailure)
+                    .into_vec();
+            }
+        };
+        let rsp = match req {
+            bl::Request::GetIdentityKey => {
+                let cose_key = self.identity.cert_chain.root_key.clone().get_key();
+                let cose_data = match cose_key.to_vec() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("Failed to serialize COSE key: {e:?}");
+                        return bl::Response::Error(
+                            bl::OpCode::GetIdentityKey,
+                            bl::ErrorCode::CborFailure,
+                        )
+                        .into_vec();
+                    }
+                };
+                bl::Response::IdentityKey(cose_data)
+            }
+        };
+        rsp.into_vec()
     }
 
     /// Process a single serialized request, returning a serialized response (even on failure).
@@ -325,19 +359,13 @@ impl Device for SecretkeeperTa {
         Ok(self.per_boot_key.clone())
     }
     fn get_identity(&self) -> Result<(Option<EcSignKey>, Identity), Error> {
-        Ok((
-            self.identity_sign_key.clone(),
-            self.identity
-                .clone()
-                .ok_or_else(|| ag_err!(InternalError, "Secretkeeper identity not available!"))?,
-        ))
+        Ok((Some(self.identity_sign_key.clone()), self.identity.clone()))
     }
     fn get_cose_sign_algorithm(&self) -> Result<iana::Algorithm, Error> {
         match &self.identity_sign_key {
-            Some(EcSignKey::Ed25519(_)) => Ok(iana::Algorithm::EdDSA),
-            Some(EcSignKey::P256(_)) => Ok(iana::Algorithm::ES256),
-            Some(EcSignKey::P384(_)) => Ok(iana::Algorithm::ES384),
-            _ => Err(ag_err!(InternalError, "Cose sign algorithm not available")),
+            EcSignKey::Ed25519(_) => Ok(iana::Algorithm::EdDSA),
+            EcSignKey::P256(_) => Ok(iana::Algorithm::ES256),
+            EcSignKey::P384(_) => Ok(iana::Algorithm::ES384),
         }
     }
 
