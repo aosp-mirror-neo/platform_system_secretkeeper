@@ -92,7 +92,7 @@ pub struct StoreSecretRequest {
     pub id: Id,
     // The secret to be stored :)
     pub secret: Secret,
-    // The dice policy to control access to secret
+    // The DICE policy to control access to secret
     pub sealing_policy: Vec<u8>,
 }
 
