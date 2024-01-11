@@ -33,8 +33,6 @@ rust_defaults {
         "libdice_policy",
         "liblog_rust",
         "libsecretkeeper_comm_nostd",
-        // TODO: remove dependency on BoringSSL when real identity available
-        "libauthgraph_boringssl",
     ],
 }
 
