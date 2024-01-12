@@ -31,7 +31,9 @@ rust_defaults {
         "libauthgraph_core",
         "libauthgraph_boringssl",
         "libbinder_rs",
+        "libciborium",
         "libcoset",
+        "libdiced_open_dice",
         // TODO(b/315464358): Use the std version
         "libsecretkeeper_comm_nostd",
         // TODO(b/291228655): This is required for 'cipher', refactor to cut this dependency.
@@ -43,4 +45,15 @@ rust_library {
     name: "libsecretkeeper_client",
     defaults: ["libsecretkeeper_client.defaults"],
     srcs: ["src/lib.rs"],
+}
+
+rust_test {
+    name: "libsecretkeeper_client.test",
+    defaults: [
+        "libsecretkeeper_client.defaults",
+        "rdroidtest.defaults",
+    ],
+    srcs: ["src/lib.rs"],
+    test_suites: ["general-tests"],
+    data: ["testdata/*"],
 }
