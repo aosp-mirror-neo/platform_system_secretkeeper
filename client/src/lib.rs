@@ -17,6 +17,8 @@
 //! It encapsulates the Cryptography! AuthgraphKeyExchange is triggered on creation of a session
 //! and the messages is encrypted/decrypted using the shared keys.
 
+pub mod dice;
+
 use authgraph_boringssl as boring;
 use authgraph_core::keyexchange as ke;
 use authgraph_core::key;
@@ -128,6 +130,23 @@ pub enum Error {
     SkCommError(secretkeeper_comm::data_types::error::Error),
 }
 
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BinderStatus(e) => write!(f, "Binder error {e:?}"),
+            Self::AuthgraphError(e) => write!(f, "Local Authgraph instance error {e:?}"),
+            Self::CipherError(e) => write!(f, "Error in encryption/decryption of packets {e:?}"),
+            Self::CoseError(e) => write!(f, "Errors originating in the coset library {e:?}"),
+            Self::UnexpectedItem(got, want) => {
+                write!(f, "Unexpected item - Got:{got}, Expected:{want}")
+            }
+            Self::SkCommError(e) => write!(f, "secretkeeper_comm error: {e:?}"),
+        }
+    }
+}
+
 impl From<authgraph_core::error::Error> for Error {
     fn from(e: authgraph_core::error::Error) -> Self {
         Self::AuthgraphError(e)
@@ -235,3 +254,6 @@ fn vec_to_identity(data: &[u8]) -> Identity {
 fn vec_to_signature(data: &[u8]) -> SessionIdSignature {
     SessionIdSignature { signature: data.to_vec() }
 }
+
+#[cfg(test)]
+rdroidtest::test_main!();
