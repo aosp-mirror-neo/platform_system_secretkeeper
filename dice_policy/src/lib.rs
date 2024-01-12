@@ -60,6 +60,7 @@
 #![allow(missing_docs)] // Sadly needed due to use of enumn::N
 
 use ciborium::Value;
+use core::matches;
 use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
 use enumn::N;
 use std::borrow::Cow;
@@ -215,12 +216,13 @@ impl CborSerializable for DicePolicy {}
 impl DicePolicy {
     /// Construct a dice policy from a given dice chain.
     /// This can be used by clients to construct a policy to seal secrets.
-    /// Constraints on all but first dice node is applied using constraint_spec argument.
-    /// For the first node (which is a ROT key), the constraint is ExactMatch of the whole node.
+    /// Constraints on all but (first & second) dice nodes is applied using constraint_spec
+    /// argument. For the first and second node (version and root public key), the constraint is
+    /// ExactMatch of the whole node.
     ///
     /// # Arguments
-    /// `dice_chain`: The serialized CBOR encoded Dice chain, adhering to Android Profile for DICE.
-    /// <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
+    /// `dice_chain`: The serialized CBOR encoded Dice chain, adhering to Explicit-key
+    /// DiceCertChain format. See definition at ExplicitKeyDiceCertChain.cddl
     ///
     /// `constraint_spec`: List of constraints to be applied on dice node.
     /// Each constraint is a ConstraintSpec object.
@@ -236,19 +238,28 @@ impl DicePolicy {
     ///
     /// 2. For hypothetical (and highly simplified) dice chain:
     ///
-    ///    [ROT_KEY, [{1 : 'a', 2 : {200 : 5, 201 : 'b'}}]]
+    ///    [1, ROT_KEY, [{1 : 'a', 2 : {200 : 5, 201 : 'b'}}]]
     ///    The following can be used
     ///    constraint_spec =[
     ///     ConstraintSpec(ConstraintType::ExactMatch, vec![1]),         // exact_matches value 'a'
     ///     ConstraintSpec(ConstraintType::GreaterOrEqual, vec![2, 200]),// matches any value >= 5
     ///    ];
     pub fn from_dice_chain(
-        dice_chain: &[u8],
+        explicit_key_dice_chain: &[u8],
         constraint_spec: &[ConstraintSpec],
     ) -> Result<Self, Error> {
-        let dice_chain = deserialize_dice_chain(dice_chain)?;
+        let dice_chain = deserialize_dice_chain(explicit_key_dice_chain)?;
+        check_is_explicit_key_dice_chain(&dice_chain)?;
         let mut constraints_list: Vec<NodeConstraints> = Vec::with_capacity(dice_chain.len());
         let mut it = dice_chain.into_iter();
+        // 1st & 2nd dice node of Explicit-key DiceCertChain format are
+        // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload. The rest are
+        // DiceChainEntry which is a CoseSign1.
+        constraints_list.push(NodeConstraints(Box::new([Constraint(
+            ConstraintType::ExactMatch as u16,
+            Vec::new(),
+            it.next().unwrap(),
+        )])));
 
         constraints_list.push(NodeConstraints(Box::new([Constraint(
             ConstraintType::ExactMatch as u16,
@@ -257,7 +268,7 @@ impl DicePolicy {
         )])));
 
         for (n, value) in it.enumerate() {
-            let entry = cbor_value_from_cose_sign(value)
+            let entry = payload_value_from_cose_sign(value)
                 .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?;
             constraints_list.push(
                 payload_to_constraints(entry, constraint_spec)
@@ -277,6 +288,7 @@ impl DicePolicy {
     /// TODO(b/291238565) Create a separate error module for DicePolicy mismatches.
     pub fn matches_dice_chain(&self, dice_chain: &[u8]) -> Result<(), Error> {
         let dice_chain = deserialize_dice_chain(dice_chain)?;
+        check_is_explicit_key_dice_chain(&dice_chain)?;
         if dice_chain.len() != self.node_constraints_list.len() {
             return Err(format!(
                 "Dice chain size({}) does not match policy({})",
@@ -288,10 +300,13 @@ impl DicePolicy {
         for (n, (dice_node, node_constraints)) in
             zip(dice_chain, self.node_constraints_list.iter()).enumerate()
         {
-            let dice_node_payload = if n == 0 {
+            let dice_node_payload = if n <= 1 {
+                // 1st & 2nd dice node of Explicit-key DiceCertChain format are
+                // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload. The rest are
+                // DiceChainEntry which is a CoseSign1.
                 dice_node
             } else {
-                cbor_value_from_cose_sign(dice_node)
+                payload_value_from_cose_sign(dice_node)
                     .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?
             };
             check_constraints_on_node(node_constraints, &dice_node_payload)
@@ -392,7 +407,8 @@ fn lookup_value_in_nested_map(
 
 fn get_map_from_value(cbor_map: &Value) -> Result<Cow<Vec<(Value, Value)>>, Error> {
     match cbor_map {
-        Value::Bytes(b) => value_from_bytes(b)?
+        Value::Bytes(b) => Value::from_slice(b)
+            .map_err(|e| format!("{e:?}"))?
             .into_map()
             .map(Cow::Owned)
             .map_err(|e| format!("Expected a CBOR map: {:?}", e)),
@@ -411,38 +427,32 @@ fn lookup_value_in_map(map: &[(Value, Value)], key: i64) -> Option<&Value> {
     None
 }
 
+// This library only works with Explicit-key DiceCertChain format. Further we require it to have
+// at least 1 DiceChainEntry. Note that this is a lightweight check so that we fail early for
+// legacy chains.
+fn check_is_explicit_key_dice_chain(dice_chain: &[Value]) -> Result<(), Error> {
+    if matches!(dice_chain, [Value::Integer(_version), Value::Bytes(_public_key), _entry, ..]) {
+        Ok(())
+    } else {
+        Err("Chain is not in explicit key format".to_string())
+    }
+}
+
 /// Extract the payload from the COSE Sign
-fn cbor_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
-    let sign1 =
-        CoseSign1::from_cbor_value(cbor).map_err(|e| format!("Error extracting CoseKey: {}", e))?;
+fn payload_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
+    let sign1 = CoseSign1::from_cbor_value(cbor)
+        .map_err(|e| format!("Error extracting CoseSign1: {e:?}"))?;
     match sign1.payload {
         None => Err("Missing payload".to_string()),
-        Some(payload) => Ok(value_from_bytes(&payload)?),
+        Some(payload) => Value::from_slice(&payload).map_err(|e| format!("{e:?}")),
     }
 }
 fn deserialize_dice_chain(dice_chain_bytes: &[u8]) -> Result<Vec<Value>, Error> {
-    // TODO(b/298217847): Check if the given dice chain adheres to Explicit-key DiceCertChain
-    // format and if not, convert it.
-    let dice_chain = value_from_bytes(dice_chain_bytes)
+    let dice_chain = Value::from_slice(dice_chain_bytes)
         .map_err(|e| format!("Unable to decode top-level CBOR: {e:?}"))?;
-    let dice_chain = match dice_chain {
-        Value::Array(array) if array.len() >= 2 => array,
-        _ => {
-            return Err(format!("Expected an array of at least length 2, found: {:?}", dice_chain))
-        }
-    };
+    let dice_chain =
+        dice_chain.into_array().map_err(|e| format!("Expected an array found: {:?}", e))?;
     Ok(dice_chain)
-}
-
-/// Decodes the provided binary CBOR-encoded value and returns a
-/// ciborium::Value struct wrapped in Result.
-fn value_from_bytes(mut bytes: &[u8]) -> Result<Value, Error> {
-    let value = ciborium::de::from_reader(&mut bytes).map_err(|e| format!("{e:?}"))?;
-    // Ciborium tries to read one Value, & doesn't care if there is trailing data after it. We do.
-    if !bytes.is_empty() {
-        return Err("Unexpected trailing data while converting to CBOR value".to_string());
-    }
-    Ok(value)
 }
 
 // Useful to convert [`ciborium::Value`] to integer. Note we already downgrade the returned
@@ -472,6 +482,7 @@ mod tests {
     const COMPONENT_VERSION: i64 = -70003;
     const SECURITY_VERSION: i64 = -70005;
     const KEY_MODE: i64 = -4670551;
+    const EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION: u64 = 1;
 
     // Helper struct to encapsulate artifacts that are useful for unit tests.
     struct TestArtifacts {
@@ -497,7 +508,7 @@ mod tests {
             const UNCONSTRAINED_STRING: &str = "unconstrained_string";
             const ANOTHER_UNCONSTRAINED_STRING: &str = "another_unconstrained_string";
 
-            let rot_key = CoseKey::default().to_cbor_value().unwrap();
+            let rot_key = Value::Bytes(CoseKey::default().to_vec().unwrap());
             let input_dice = Self::get_dice_chain_helper(
                 rot_key.clone(),
                 EXAMPLE_NUM_1,
@@ -520,6 +531,11 @@ mod tests {
                     NodeConstraints(Box::new([Constraint(
                         ConstraintType::ExactMatch as u16,
                         vec![],
+                        Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION),
+                    )])),
+                    NodeConstraints(Box::new([Constraint(
+                        ConstraintType::ExactMatch as u16,
+                        vec![],
                         rot_key.clone(),
                     )])),
                     NodeConstraints(Box::new([
@@ -538,7 +554,7 @@ mod tests {
             };
 
             let updated_input_dice = Self::get_dice_chain_helper(
-                rot_key.clone(),
+                rot_key,
                 EXAMPLE_NUM_2,
                 EXAMPLE_STRING,
                 ANOTHER_UNCONSTRAINED_STRING,
@@ -563,10 +579,10 @@ mod tests {
             let payload = cbor!({
                 1 => constrained_string,
                 2 => unconstrained_string,
-                3 => Value::Bytes(value_to_bytes(&nested_payload).unwrap()),
+                3 => Value::Bytes(nested_payload.to_vec().unwrap()),
             })
             .unwrap();
-            let payload = value_to_bytes(&payload).unwrap();
+            let payload = payload.to_vec().unwrap();
             let dice_node = CoseSign1 {
                 protected: ProtectedHeader::default(),
                 unprotected: Header::default(),
@@ -575,9 +591,13 @@ mod tests {
             }
             .to_cbor_value()
             .unwrap();
-            let input_dice = Value::Array([rot_key.clone(), dice_node].to_vec());
+            let input_dice = Value::Array(vec![
+                Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION),
+                rot_key,
+                dice_node,
+            ]);
 
-            value_to_bytes(&input_dice).unwrap()
+            input_dice.to_vec().unwrap()
         }
     }
 
@@ -604,25 +624,19 @@ mod tests {
     test!(policy_matches_original_dice_chain);
     fn policy_matches_original_dice_chain() {
         let example = TestArtifacts::get_example();
-        assert!(
-            DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
-                .unwrap()
-                .matches_dice_chain(&example.input_dice)
-                .is_ok(),
-            "The dice chain did not match the policy constructed out of it!"
-        );
+        DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
+            .unwrap()
+            .matches_dice_chain(&example.input_dice)
+            .unwrap();
     }
 
     test!(policy_matches_updated_dice_chain);
     fn policy_matches_updated_dice_chain() {
         let example = TestArtifacts::get_example();
-        assert!(
-            DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
-                .unwrap()
-                .matches_dice_chain(&example.updated_input_dice)
-                .is_ok(),
-            "The updated dice chain did not match the original policy!"
-        );
+        DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
+            .unwrap()
+            .matches_dice_chain(&example.updated_input_dice)
+            .unwrap();
     }
 
     test!(policy_mismatch_downgraded_dice_chain);
@@ -671,8 +685,8 @@ mod tests {
         // This is the number of certs in compos bcc (including the first ROT)
         // To analyze a bcc use hwtrust tool from /tools/security/remote_provisioning/hwtrust
         // `hwtrust --verbose dice-chain [path]/composbcc`
-        let compos_dice_chain_size: usize = 5;
-        let input_dice = include_bytes!("../testdata/composbcc");
+        const COMPOS_CHAIN_SIZE_EXPLICIT_KEY: usize = 6;
+        let input_dice = include_bytes!("../testdata/compos_chain_explicit");
         let constraint_spec = [
             ConstraintSpec::new(ConstraintType::ExactMatch, vec![AUTHORITY_HASH], false),
             ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE], false),
@@ -693,15 +707,8 @@ mod tests {
             ),
         ];
         let policy = DicePolicy::from_dice_chain(input_dice, &constraint_spec).unwrap();
-        assert_eq!(policy.node_constraints_list.len(), compos_dice_chain_size);
+        assert_eq!(policy.node_constraints_list.len(), COMPOS_CHAIN_SIZE_EXPLICIT_KEY);
         // Check that original dice chain matches the policy.
         policy.matches_dice_chain(input_dice).unwrap();
-    }
-
-    /// Encodes a ciborium::Value into bytes.
-    fn value_to_bytes(value: &Value) -> Result<Vec<u8>, Error> {
-        let mut bytes: Vec<u8> = Vec::new();
-        ciborium::ser::into_writer(&value, &mut bytes).map_err(|e| format!("{e:?}"))?;
-        Ok(bytes)
     }
 }
