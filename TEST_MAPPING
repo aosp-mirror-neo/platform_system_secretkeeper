@@ -10,6 +10,9 @@
       "name": "VtsSecretkeeperTargetTest"
     },
     {
+      "name": "libsecretkeeper_client.test"
+    },
+    {
       "name": "libsecretkeeper_comm.test"
     },
     {
