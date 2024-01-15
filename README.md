@@ -38,7 +38,7 @@ The underlying storage of Secretkeeper should offer the following security guara
    Note: Denial of service is not in scope. A malicious Android may be able to delete data.
    In ideal situation, the data should be persistent.
 
-## Policy based Access control
+### Access control
 
 Secretkeeper uses [DICE policy][DicePolicyCDDL] based access control. Each secret is associated
 with a sealing policy, which is a DICE policy. This is a required input while storing a secret.
