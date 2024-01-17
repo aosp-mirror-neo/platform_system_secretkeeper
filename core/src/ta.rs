@@ -47,24 +47,13 @@ use secretkeeper_comm::wire::{
     AidlErrorCode, ApiError, PerformOpReq, PerformOpResponse, PerformOpSuccessRsp, SecretId,
 };
 
+pub mod bootloader;
+
 /// Current Secretkeeper version.
 const CURRENT_VERSION: u64 = 1;
 
 /// Maximum number of live session keys.
 const MAX_SESSIONS: usize = 32;
-
-// TODO: Remove the hypothetical DICE chain, we will need DICE chain, alongwith secrets for
-// signing it for testing.
-// Developer note: I've got this chain by patching libdice_policy such that it dumps the
-// dice_policy corresponding to a hypothetical dice_chain (which is hard-coded input in
-// VTS secretkeeper_test_client.rs)
-const HYPOTHETICAL_DICE_CHAIN: [u8; 66] = [
-    0x82, 0xA1, 0x01, 0x00, 0x84, 0x40, 0xA0, 0x58, 0x34, 0xA3, 0x01, 0x73, 0x74, 0x65, 0x73, 0x74,
-    0x69, 0x6E, 0x67, 0x5F, 0x64, 0x69, 0x63, 0x65, 0x5F, 0x70, 0x6F, 0x6C, 0x69, 0x63, 0x79, 0x02,
-    0x74, 0x75, 0x6E, 0x63, 0x6F, 0x6E, 0x73, 0x74, 0x72, 0x61, 0x69, 0x6E, 0x65, 0x64, 0x5F, 0x73,
-    0x74, 0x72, 0x69, 0x6E, 0x67, 0x03, 0x46, 0xA1, 0x18, 0x64, 0x19, 0xE9, 0x75, 0x44, 0x64, 0x64,
-    0x65, 0x66,
-];
 
 /// Macro to build an [`ApiError`] instance.
 /// E.g. use: `aidl_err!(InternalError, "some {} format", arg)`.
@@ -90,10 +79,10 @@ pub struct SecretkeeperTa {
     per_boot_key: AesKey,
 
     /// The signing key corresponding to the leaf of the Secretkeeper identity DICE chain.
-    identity_sign_key: Option<EcSignKey>,
+    identity_sign_key: EcSignKey,
 
     /// Secretkeeper identity.
-    identity: Option<Identity>,
+    identity: Identity,
 
     /// Current sessions.
     session_artifacts: VecDeque<SessionArtifacts>,
@@ -137,11 +126,43 @@ impl SecretkeeperTa {
             aes_gcm,
             rng,
             per_boot_key,
-            identity_sign_key: Some(identity_sign_key),
-            identity: Some(identity),
+            identity_sign_key,
+            identity,
             session_artifacts: VecDeque::new(),
             store,
         })
+    }
+
+    /// Process a single serialized request from the bootloader, returning a serialized response
+    /// (even on failure).
+    pub fn process_bootloader(&self, req_data: &[u8]) -> Vec<u8> {
+        use bootloader as bl;
+        let req = match bl::Request::from_slice(req_data) {
+            Ok(req) => req,
+            Err(e) => {
+                error!("Failed to deserialize bootloader request: {e:?}");
+                return bl::Response::Error(bl::OpCode::Unknown, bl::ErrorCode::CborFailure)
+                    .into_vec();
+            }
+        };
+        let rsp = match req {
+            bl::Request::GetIdentityKey => {
+                let cose_key = self.identity.cert_chain.root_key.clone().get_key();
+                let cose_data = match cose_key.to_vec() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("Failed to serialize COSE key: {e:?}");
+                        return bl::Response::Error(
+                            bl::OpCode::GetIdentityKey,
+                            bl::ErrorCode::CborFailure,
+                        )
+                        .into_vec();
+                    }
+                };
+                bl::Response::IdentityKey(cose_data)
+            }
+        };
+        rsp.into_vec()
     }
 
     /// Process a single serialized request, returning a serialized response (even on failure).
@@ -205,8 +226,9 @@ impl SecretkeeperTa {
         let kid: &[u8; SESSION_ID_LEN] = key_id(&encrypt0)
             .try_into()
             .map_err(|e| aidl_err!(RequestMalformed, "session key of unexpected size: {e:?}"))?;
+        let peer_cert_chain = self.peer_cert_chain(kid)?;
         let req = self.decrypt_request(&encrypt0, kid)?;
-        let result = self.process_inner(&req);
+        let result = self.process_inner(&req, &peer_cert_chain);
 
         // An inner failure still converts to a response message that gets encrypted.
         let rsp_data = match result {
@@ -219,7 +241,26 @@ impl SecretkeeperTa {
         self.encrypt_response(&rsp_data, kid)
     }
 
-    fn process_inner(&mut self, req: &[u8]) -> Result<Vec<u8>, SecretkeeperError> {
+    fn peer_cert_chain(&self, kid: &[u8; SESSION_ID_LEN]) -> Result<Vec<u8>, ApiError> {
+        let cert_chain = self
+            .session_artifacts
+            .iter()
+            .find_map(|info| {
+                if info.session_keys.session_id == *kid {
+                    Some(info.session_keys.peer_cert_chain.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| aidl_err!(UnknownKeyId, "session info not found"))?;
+        Ok(cert_chain)
+    }
+
+    fn process_inner(
+        &mut self,
+        req: &[u8],
+        peer_cert_chain: &[u8],
+    ) -> Result<Vec<u8>, SecretkeeperError> {
         let req_packet = RequestPacket::from_slice(req).map_err(|e| {
             error!("Failed to get Request packet from bytes: {e:?}");
             SecretkeeperError::RequestMalformed
@@ -227,8 +268,8 @@ impl SecretkeeperTa {
         let rsp_packet =
             match req_packet.opcode().map_err(|_| SecretkeeperError::RequestMalformed)? {
                 Opcode::GetVersion => Self::get_version(req_packet)?,
-                Opcode::StoreSecret => self.store_secret(req_packet)?,
-                Opcode::GetSecret => self.get_secret(req_packet)?,
+                Opcode::StoreSecret => self.store_secret(req_packet, peer_cert_chain)?,
+                Opcode::GetSecret => self.get_secret(req_packet, peer_cert_chain)?,
                 _ => panic!("Unknown operation.."),
             };
         rsp_packet.to_vec().map_err(|_| SecretkeeperError::UnexpectedServerError)
@@ -246,31 +287,24 @@ impl SecretkeeperTa {
     fn store_secret(
         &mut self,
         request: RequestPacket,
+        peer_cert_chain: &[u8],
     ) -> Result<ResponsePacket, SecretkeeperError> {
         let request = StoreSecretRequest::deserialize_from_packet(request)
             .map_err(|_| SecretkeeperError::RequestMalformed)?;
-        self.store.store(
-            request.id,
-            request.secret,
-            request.sealing_policy,
-            // TODO(b/291228560): Identify the session & use the corresponding `Identity`
-            // instead of hardcoded chain.
-            &HYPOTHETICAL_DICE_CHAIN,
-        )?;
+        self.store.store(request.id, request.secret, request.sealing_policy, peer_cert_chain)?;
         let response = StoreSecretResponse {};
         Ok(response.serialize_to_packet())
     }
 
-    fn get_secret(&mut self, request: RequestPacket) -> Result<ResponsePacket, SecretkeeperError> {
+    fn get_secret(
+        &mut self,
+        request: RequestPacket,
+        peer_cert_chain: &[u8],
+    ) -> Result<ResponsePacket, SecretkeeperError> {
         let request = GetSecretRequest::deserialize_from_packet(request)
             .map_err(|_| SecretkeeperError::RequestMalformed)?;
-        let secret = self.store.get(
-            &request.id,
-            // TODO(b/291228560): DICE chain should be received during AuthgraphKeyExchange
-            // instead of being hard-coded.
-            &HYPOTHETICAL_DICE_CHAIN,
-            request.updated_sealing_policy,
-        )?;
+        let secret =
+            self.store.get(&request.id, peer_cert_chain, request.updated_sealing_policy)?;
         let response = GetSecretResponse { secret };
         Ok(response.serialize_to_packet())
     }
@@ -325,19 +359,13 @@ impl Device for SecretkeeperTa {
         Ok(self.per_boot_key.clone())
     }
     fn get_identity(&self) -> Result<(Option<EcSignKey>, Identity), Error> {
-        Ok((
-            self.identity_sign_key.clone(),
-            self.identity
-                .clone()
-                .ok_or_else(|| ag_err!(InternalError, "Secretkeeper identity not available!"))?,
-        ))
+        Ok((Some(self.identity_sign_key.clone()), self.identity.clone()))
     }
     fn get_cose_sign_algorithm(&self) -> Result<iana::Algorithm, Error> {
         match &self.identity_sign_key {
-            Some(EcSignKey::Ed25519(_)) => Ok(iana::Algorithm::EdDSA),
-            Some(EcSignKey::P256(_)) => Ok(iana::Algorithm::ES256),
-            Some(EcSignKey::P384(_)) => Ok(iana::Algorithm::ES384),
-            _ => Err(ag_err!(InternalError, "Cose sign algorithm not available")),
+            EcSignKey::Ed25519(_) => Ok(iana::Algorithm::EdDSA),
+            EcSignKey::P256(_) => Ok(iana::Algorithm::ES256),
+            EcSignKey::P384(_) => Ok(iana::Algorithm::ES384),
         }
     }
 
@@ -369,11 +397,16 @@ impl Device for SecretkeeperTa {
             authgraph_core::arc::decipher_arc(&self.per_boot_key, &shared_keys[0], &*self.aes_gcm)?;
         let recv_key =
             authgraph_core::arc::decipher_arc(&self.per_boot_key, &shared_keys[1], &*self.aes_gcm)?;
+        let peer_cert_chain = peer_identity
+            .cert_chain
+            .clone()
+            .to_vec()
+            .map_err(|e| ag_err!(InternalError, "Failed to encode peer's cert chain: {e:?}"))?;
 
         // We assume that the session ID is unique and not already present in `session_keys`.
         self.session_artifacts.push_back(SessionArtifacts {
             session_keys: AgSessionKeys {
-                _peer_identity: peer_identity.clone(),
+                peer_cert_chain,
                 session_id: *session_id,
                 send_key: send_key.payload.try_into()?,
                 recv_key: recv_key.payload.try_into()?,
@@ -412,7 +445,7 @@ struct SessionArtifacts {
 }
 
 struct AgSessionKeys {
-    _peer_identity: Identity,
+    peer_cert_chain: Vec<u8>,
     session_id: [u8; 32],
     send_key: AesKey,
     recv_key: AesKey,
