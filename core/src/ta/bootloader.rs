@@ -26,14 +26,25 @@ use alloc::vec::Vec;
 
 const U32_LEN: usize = core::mem::size_of::<u32>();
 
-/// Requests that Secretkeeper can receive from the bootloader.
+type Error = String;
+
+/// Op code values corresponding to Request variants.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u32)]
+pub enum OpCode {
+    /// Unknown op code, for example when an incoming request cannot be identified.
+    Unknown = 0,
+    /// Retrieve the Secretkeeper public key used as an identity.
+    GetIdentityKey = 1,
+}
+
+/// Requests that Secretkeeper can receive from the bootloader.  Distinct requests
+/// are identified by the corresponding [`OpCode`] value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// Request to retrieve the Secretkeeper identity public key, as a COSE_Key.
-    GetIdentityKey,
+    GetIdentityKey, // `OpCode::GetIdentityKey`
 }
-
-type Error = String;
 
 impl Request {
     /// Build a request message structure from received serialized data, expected to be in the form:
@@ -136,16 +147,6 @@ impl Response {
             },
         }
     }
-}
-
-/// Op code values corresponding to Request variants.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[repr(u32)]
-pub enum OpCode {
-    /// Unknown op code, for example when an incoming request cannot be identified.
-    Unknown = 0,
-    /// Retrieve the Secretkeeper public key used as an identity.
-    GetIdentityKey = 1,
 }
 
 /// Error code values.
