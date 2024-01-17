@@ -18,12 +18,12 @@
 
 use ciborium::value::Value;
 use coset::{AsCborValue, CborSerializable};
-use rdroidtest::test;
+use rdroidtest::rdroidtest;
 use secretkeeper_comm::wire::{
     AidlErrorCode, ApiError, OpCode, PerformOpReq, PerformOpResponse, PerformOpSuccessRsp,
 };
 
-test!(wire_req_roundtrip);
+#[rdroidtest]
 fn wire_req_roundtrip() {
     let tests = [
         PerformOpReq::SecretManagement(vec![]),
@@ -40,7 +40,7 @@ fn wire_req_roundtrip() {
     }
 }
 
-test!(wire_rsp_roundtrip);
+#[rdroidtest]
 fn wire_rsp_roundtrip() {
     let tests = [
         PerformOpResponse::Success(PerformOpSuccessRsp::ProtectedResponse(vec![])),
@@ -59,28 +59,28 @@ fn wire_rsp_roundtrip() {
     }
 }
 
-test!(wire_req_deserialize_fail);
+#[rdroidtest]
 fn wire_req_deserialize_fail() {
     let bogus_data = [0x99, 0x99];
     let result = PerformOpReq::from_slice(&bogus_data);
     assert!(result.is_err());
 }
 
-test!(wire_rsp_deserialize_fail);
+#[rdroidtest]
 fn wire_rsp_deserialize_fail() {
     let bogus_data = [0x99, 0x99];
     let result = PerformOpReq::from_slice(&bogus_data);
     assert!(result.is_err());
 }
 
-test!(wire_opcode_out_of_range);
+#[rdroidtest]
 fn wire_opcode_out_of_range() {
     let bignum = Value::Integer(999.into());
     let result = OpCode::from_cbor_value(bignum);
     assert!(result.is_err());
 }
 
-test!(wire_rsp_errcode_out_of_range);
+#[rdroidtest]
 fn wire_rsp_errcode_out_of_range() {
     let bogus_data = [
         0x82, // 2-arr

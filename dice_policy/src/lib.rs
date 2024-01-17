@@ -487,7 +487,7 @@ mod tests {
     use super::*;
     use ciborium::cbor;
     use coset::{CoseKey, Header, ProtectedHeader};
-    use rdroidtest::test;
+    use rdroidtest::rdroidtest;
 
     const AUTHORITY_HASH: i64 = -4670549;
     const CONFIG_DESC: i64 = -4670548;
@@ -618,7 +618,7 @@ mod tests {
         }
     }
 
-    test!(policy_structure_check);
+    #[rdroidtest]
     fn policy_structure_check() {
         let example = TestArtifacts::get_example();
         let policy =
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(policy, example.expected_dice_policy);
     }
 
-    test!(policy_enc_dec_test);
+    #[rdroidtest]
     fn policy_enc_dec_test() {
         // An example dice policy
         let dice_policy: DicePolicy = TestArtifacts::get_example().expected_dice_policy;
@@ -638,7 +638,7 @@ mod tests {
         assert_eq!(dice_policy, dice_policy_enc_dec);
     }
 
-    test!(policy_matches_original_dice_chain);
+    #[rdroidtest]
     fn policy_matches_original_dice_chain() {
         let example = TestArtifacts::get_example();
         DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
@@ -647,7 +647,7 @@ mod tests {
             .unwrap();
     }
 
-    test!(policy_matches_updated_dice_chain);
+    #[rdroidtest]
     fn policy_matches_updated_dice_chain() {
         let example = TestArtifacts::get_example();
         DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
@@ -656,7 +656,7 @@ mod tests {
             .unwrap();
     }
 
-    test!(policy_mismatch_downgraded_dice_chain);
+    #[rdroidtest]
     fn policy_mismatch_downgraded_dice_chain() {
         let example = TestArtifacts::get_example();
         assert!(
@@ -669,7 +669,7 @@ mod tests {
         );
     }
 
-    test!(policy_constructional_required_constraint);
+    #[rdroidtest]
     fn policy_constructional_required_constraint() {
         let mut example = TestArtifacts::get_example();
         // The constraint_path [9,8,7] is not present in example.input_dice
@@ -684,7 +684,7 @@ mod tests {
         );
     }
 
-    test!(policy_constructional_optional_constraint);
+    #[rdroidtest]
     fn policy_constructional_optional_constraint() {
         let mut example = TestArtifacts::get_example();
         // The constraint_path [9,8,7] is not present in example.input_dice
@@ -697,7 +697,7 @@ mod tests {
         _ = DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).unwrap()
     }
 
-    test!(policy_dice_size_is_same);
+    #[rdroidtest]
     fn policy_dice_size_is_same() {
         // This is the number of certs in compos bcc (including the first ROT)
         // To analyze a bcc use hwtrust tool from /tools/security/remote_provisioning/hwtrust

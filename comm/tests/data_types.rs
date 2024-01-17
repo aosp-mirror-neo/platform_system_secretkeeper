@@ -18,7 +18,7 @@
 
 use ciborium::Value;
 use coset::CborSerializable;
-use rdroidtest::test;
+use rdroidtest::rdroidtest;
 use secretkeeper_comm::data_types::error::{Error, SecretkeeperError, ERROR_OK};
 use secretkeeper_comm::data_types::packet::{RequestPacket, ResponsePacket, ResponseType};
 use secretkeeper_comm::data_types::request::Request;
@@ -30,19 +30,19 @@ use secretkeeper_comm::data_types::request_response_impl::{
 use secretkeeper_comm::data_types::response::Response;
 use secretkeeper_comm::data_types::{Id, Secret, SeqNum};
 
-test!(request_serialization_deserialization_get_version);
+#[rdroidtest]
 fn request_serialization_deserialization_get_version() {
     verify_request_structure(GetVersionRequest {}, Opcode::GetVersion);
 }
 
-test!(request_serialization_deserialization_store_secret);
+#[rdroidtest]
 fn request_serialization_deserialization_store_secret() {
     let req =
         StoreSecretRequest { id: ex_id(), secret: ex_secret(), sealing_policy: ex_dice_policy() };
     verify_request_structure(req, Opcode::StoreSecret);
 }
 
-test!(request_serialization_deserialization_get_secret);
+#[rdroidtest]
 fn request_serialization_deserialization_get_secret() {
     let req = GetSecretRequest { id: ex_id(), updated_sealing_policy: Some(ex_dice_policy()) };
     verify_request_structure(req, Opcode::GetSecret);
@@ -51,25 +51,25 @@ fn request_serialization_deserialization_get_secret() {
     verify_request_structure(req, Opcode::GetSecret);
 }
 
-test!(success_response_serialization_deserialization_get_version);
+#[rdroidtest]
 fn success_response_serialization_deserialization_get_version() {
     let response = GetVersionResponse { version: 1 };
     verify_response_structure(response, ResponseType::Success);
 }
 
-test!(success_response_serialization_deserialization_store_secret);
+#[rdroidtest]
 fn success_response_serialization_deserialization_store_secret() {
     let response = StoreSecretResponse {};
     verify_response_structure(response, ResponseType::Success);
 }
 
-test!(success_response_serialization_deserialization_get_secret);
+#[rdroidtest]
 fn success_response_serialization_deserialization_get_secret() {
     let response = GetSecretResponse { secret: ex_secret() };
     verify_response_structure(response, ResponseType::Success);
 }
 
-test!(error_response_serialization_deserialization);
+#[rdroidtest]
 fn error_response_serialization_deserialization() {
     let response = SecretkeeperError::RequestMalformed;
     verify_response_structure(response, ResponseType::Error);
@@ -99,7 +99,7 @@ fn verify_response_structure<R: Response + core::fmt::Debug + core::cmp::Partial
     assert_eq!(response, response_other_end);
 }
 
-test!(request_creation);
+#[rdroidtest]
 fn request_creation() {
     // GetVersionRequest
     let _: GetVersionRequest = *Request::new(vec![]).unwrap();
@@ -128,7 +128,7 @@ fn request_creation() {
     assert_eq!(req.updated_sealing_policy, None);
 }
 
-test!(response_creation);
+#[rdroidtest]
 fn response_creation() {
     // GetVersionResponse
     let res: GetVersionResponse =
@@ -147,7 +147,7 @@ fn response_creation() {
     assert_eq!(res.secret.0, ex_secret().0);
 }
 
-test!(invalid_request_creation);
+#[rdroidtest]
 fn invalid_request_creation() {
     // A GetVersionRequest with non-zero arg is invalid.
     assert!(<GetVersionRequest as Request>::new(vec![Value::Null]).is_err());
@@ -174,7 +174,7 @@ fn invalid_request_creation() {
     .is_err());
 }
 
-test!(invalid_response_creation_get_version);
+#[rdroidtest]
 fn invalid_response_creation_get_version() {
     // A response with non-zero error_code is an invalid success response.
     assert!(<GetVersionResponse as Response>::new(vec![
@@ -199,7 +199,7 @@ fn invalid_response_creation_get_version() {
     .is_err());
 }
 
-test!(invalid_store_secret_response_creation);
+#[rdroidtest]
 fn invalid_store_secret_response_creation() {
     // A response with non-zero error_code is an invalid success response.
     assert!(<StoreSecretResponse as Response>::new(vec![Value::from(
@@ -212,7 +212,7 @@ fn invalid_store_secret_response_creation() {
         .is_err());
 }
 
-test!(invalid_get_secret_response_creation);
+#[rdroidtest]
 fn invalid_get_secret_response_creation() {
     // A response with non-zero error_code is an invalid success response.
     assert!(<GetSecretResponse as Response>::new(vec![
@@ -227,7 +227,7 @@ fn invalid_get_secret_response_creation() {
     );
 }
 
-test!(invalid_error_response_creation);
+#[rdroidtest]
 fn invalid_error_response_creation() {
     // A response with ERROR_OK(0) as the error_code is an invalid error response.
     assert_eq!(
@@ -236,7 +236,7 @@ fn invalid_error_response_creation() {
     );
 }
 
-test!(seq_num_test);
+#[rdroidtest]
 fn seq_num_test() {
     let mut seq_b = SeqNum::new();
     let mut seq_a = SeqNum::new();
