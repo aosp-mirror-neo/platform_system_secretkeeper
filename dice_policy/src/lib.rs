@@ -93,24 +93,38 @@ pub enum ConstraintType {
     GreaterOrEqual = 2,
 }
 
-/// ConstraintSpec is used to specify which constraint type to apply and
-/// on which all entries in a dice node.
-/// See documentation of `from_dice_chain()` for examples.
+/// ConstraintSpec is used to specify which constraint type to apply and on which all values in a
+/// DiceChainEntry. See documentation of `from_dice_chain()` for examples.
 pub struct ConstraintSpec {
     constraint_type: ConstraintType,
-    // path is essentially a list of label/int.
-    // It identifies which entry (in a dice node) to be applying constraints on.
+    // `path` is essentially a list of label/int.
+    // It identifies which values (in a `DiceChainEntry`) to be applying constraints on.
     path: Vec<i64>,
-    // If set to true, the constraint is skipped if the `path` is missing in a dice node
-    // while constructing a policy. Note that this does not affect policy matching.
-    optional: bool,
+    // If set to `Ignore`, the constraint is skipped if the `path` is missing in a
+    // `DiceChainEntry` while constructing a policy. Note that this does not affect policy
+    // matching.
+    if_path_missing: MissingAction,
 }
 
 impl ConstraintSpec {
     /// Construct the ConstraintSpec.
-    pub fn new(constraint_type: ConstraintType, path: Vec<i64>, optional: bool) -> Self {
-        Self { constraint_type, path, optional }
+    pub fn new(
+        constraint_type: ConstraintType,
+        path: Vec<i64>,
+        if_path_missing: MissingAction,
+    ) -> Self {
+        Self { constraint_type, path, if_path_missing }
     }
+}
+
+/// Used to define a `ConstraintSpec` requirement. This allows client to set behavior of
+/// policy construction in case the `path` is missing in a `DiceChainEntry`.
+#[derive(Eq, PartialEq)]
+pub enum MissingAction {
+    /// Indicates that a constraint `path` is required in each `DiceChainEntry`. Fail if missing!
+    Fail,
+    /// Indicates that a constraint `path` may be missing in some `DiceChainEntry`. Ignore!
+    Ignore,
 }
 
 // TODO(b/291238565): Restrict (nested_)key & value type to (bool/int/tstr/bstr).
@@ -375,13 +389,12 @@ fn payload_to_constraints(
                 node_constraints.push(constraint);
             }
             None => {
-                if constraint_item.optional {
-                    log::warn!(
-                        "Value not found for an optional constraint {constraint_path:?}, skipping!"
-                    )
+                if constraint_item.if_path_missing == MissingAction::Ignore {
+                    log::warn!("Value not found for {constraint_path:?}, - skipping!")
                 } else {
                     return Err(format!(
-                        "Value not found for non-optional constraint: {constraint_path:?}"
+                        "Value not found for : {constraint_path:?}, constraint\
+                         spec is marked to fail on missing path"
                     ));
                 }
             }
@@ -474,7 +487,7 @@ mod tests {
     use super::*;
     use ciborium::cbor;
     use coset::{CoseKey, Header, ProtectedHeader};
-    use rdroidtest::test;
+    use rdroidtest::rdroidtest;
 
     const AUTHORITY_HASH: i64 = -4670549;
     const CONFIG_DESC: i64 = -4670548;
@@ -520,10 +533,14 @@ mod tests {
             // which are also hardcoded within the get_dice_chain_helper.
 
             let constraint_spec = vec![
-                ConstraintSpec::new(ConstraintType::ExactMatch, vec![1], false),
+                ConstraintSpec::new(ConstraintType::ExactMatch, vec![1], MissingAction::Fail),
                 // Notice how key "2" is (deliberately) absent in ConstraintSpec
                 // so policy should not constrain it.
-                ConstraintSpec::new(ConstraintType::GreaterOrEqual, vec![3, 100], false),
+                ConstraintSpec::new(
+                    ConstraintType::GreaterOrEqual,
+                    vec![3, 100],
+                    MissingAction::Fail,
+                ),
             ];
             let expected_dice_policy = DicePolicy {
                 version: 1,
@@ -601,7 +618,7 @@ mod tests {
         }
     }
 
-    test!(policy_structure_check);
+    #[rdroidtest]
     fn policy_structure_check() {
         let example = TestArtifacts::get_example();
         let policy =
@@ -611,7 +628,7 @@ mod tests {
         assert_eq!(policy, example.expected_dice_policy);
     }
 
-    test!(policy_enc_dec_test);
+    #[rdroidtest]
     fn policy_enc_dec_test() {
         // An example dice policy
         let dice_policy: DicePolicy = TestArtifacts::get_example().expected_dice_policy;
@@ -621,7 +638,7 @@ mod tests {
         assert_eq!(dice_policy, dice_policy_enc_dec);
     }
 
-    test!(policy_matches_original_dice_chain);
+    #[rdroidtest]
     fn policy_matches_original_dice_chain() {
         let example = TestArtifacts::get_example();
         DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
@@ -630,7 +647,7 @@ mod tests {
             .unwrap();
     }
 
-    test!(policy_matches_updated_dice_chain);
+    #[rdroidtest]
     fn policy_matches_updated_dice_chain() {
         let example = TestArtifacts::get_example();
         DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
@@ -639,7 +656,7 @@ mod tests {
             .unwrap();
     }
 
-    test!(policy_mismatch_downgraded_dice_chain);
+    #[rdroidtest]
     fn policy_mismatch_downgraded_dice_chain() {
         let example = TestArtifacts::get_example();
         assert!(
@@ -652,35 +669,35 @@ mod tests {
         );
     }
 
-    test!(policy_constructional_non_optional_constraint);
-    fn policy_constructional_non_optional_constraint() {
+    #[rdroidtest]
+    fn policy_constructional_required_constraint() {
         let mut example = TestArtifacts::get_example();
         // The constraint_path [9,8,7] is not present in example.input_dice
         example.constraint_spec.push(ConstraintSpec::new(
             ConstraintType::ExactMatch,
             vec![9, 8, 7],
-            /*optional*/ false,
+            MissingAction::Fail,
         ));
         assert!(
             DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).is_err(),
-            "DicePolicy creation should've failed on non-optional constraint"
+            "DicePolicy creation should've failed on Required constraint"
         );
     }
 
-    test!(policy_constructional_optional_constraint);
+    #[rdroidtest]
     fn policy_constructional_optional_constraint() {
         let mut example = TestArtifacts::get_example();
         // The constraint_path [9,8,7] is not present in example.input_dice
         example.constraint_spec.push(ConstraintSpec::new(
             ConstraintType::ExactMatch,
             vec![9, 8, 7],
-            /*optional*/ true,
+            MissingAction::Ignore,
         ));
         // However for optional constraint, policy construction should succeed!
         _ = DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).unwrap()
     }
 
-    test!(policy_dice_size_is_same);
+    #[rdroidtest]
     fn policy_dice_size_is_same() {
         // This is the number of certs in compos bcc (including the first ROT)
         // To analyze a bcc use hwtrust tool from /tools/security/remote_provisioning/hwtrust
@@ -688,22 +705,26 @@ mod tests {
         const COMPOS_CHAIN_SIZE_EXPLICIT_KEY: usize = 6;
         let input_dice = include_bytes!("../testdata/compos_chain_explicit");
         let constraint_spec = [
-            ConstraintSpec::new(ConstraintType::ExactMatch, vec![AUTHORITY_HASH], false),
-            ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE], false),
+            ConstraintSpec::new(
+                ConstraintType::ExactMatch,
+                vec![AUTHORITY_HASH],
+                MissingAction::Fail,
+            ),
+            ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE], MissingAction::Fail),
             ConstraintSpec::new(
                 ConstraintType::ExactMatch,
                 vec![CONFIG_DESC, COMPONENT_NAME],
-                false,
+                MissingAction::Fail,
             ),
             ConstraintSpec::new(
                 ConstraintType::GreaterOrEqual,
                 vec![CONFIG_DESC, COMPONENT_VERSION],
-                true,
+                MissingAction::Ignore,
             ),
             ConstraintSpec::new(
                 ConstraintType::GreaterOrEqual,
                 vec![CONFIG_DESC, SECURITY_VERSION],
-                true,
+                MissingAction::Ignore,
             ),
         ];
         let policy = DicePolicy::from_dice_chain(input_dice, &constraint_spec).unwrap();
