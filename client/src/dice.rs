@@ -98,9 +98,9 @@ fn deserialize_cbor_array(cbor_array: &[u8]) -> Result<Vec<Value>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rdroidtest::test;
+    use rdroidtest::rdroidtest;
 
-    test!(implicit_to_explicit_dice_chain_conversion);
+    #[rdroidtest]
     fn implicit_to_explicit_dice_chain_conversion() {
         const COMPOS_CHAIN_SIZE_LEGACY: usize = 5;
         let implicit_dice = include_bytes!("../testdata/compos_chain_legacy");
@@ -113,7 +113,7 @@ mod tests {
         assert!(chain_arr[1].is_bytes());
     }
 
-    test!(explicit_to_explicit_dice_chain_conversion);
+    #[rdroidtest]
     fn explicit_to_explicit_dice_chain_conversion() {
         let implicit_dice = include_bytes!("../testdata/compos_chain_legacy");
         let explicit_chain = to_explicit_chain(implicit_dice).unwrap();
