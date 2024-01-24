@@ -52,8 +52,8 @@ pub mod bootloader;
 /// Current Secretkeeper version.
 const CURRENT_VERSION: u64 = 1;
 
-/// Maximum number of live session keys.
-const MAX_SESSIONS: usize = 32;
+/// Default maximum number of live session keys.
+const MAX_SESSIONS_DEFAULT: usize = 8;
 
 /// Macro to build an [`ApiError`] instance.
 /// E.g. use: `aidl_err!(InternalError, "some {} format", arg)`.
@@ -87,6 +87,9 @@ pub struct SecretkeeperTa {
     /// Current sessions.
     session_artifacts: VecDeque<SessionArtifacts>,
 
+    /// Maximum number of current sessions.
+    max_sessions: usize,
+
     /// Storage of secrets (& sealing policy)
     store: PolicyGatedStorage,
 }
@@ -97,6 +100,16 @@ impl SecretkeeperTa {
         ag_impls: &mut CryptoTraitImpl,
         storage_impl: Box<dyn KeyValueStore>,
         identity_curve: iana::EllipticCurve,
+    ) -> Result<Self, SkInternalError> {
+        Self::new_with_session_limit(ag_impls, storage_impl, identity_curve, MAX_SESSIONS_DEFAULT)
+    }
+
+    /// Create a TA instance using the provided trait implementations.
+    pub fn new_with_session_limit(
+        ag_impls: &mut CryptoTraitImpl,
+        storage_impl: Box<dyn KeyValueStore>,
+        identity_curve: iana::EllipticCurve,
+        max_sessions: usize,
     ) -> Result<Self, SkInternalError> {
         // Create a per-boot-key for AuthGraph to use.
         let aes_gcm = ag_impls.aes_gcm.box_clone();
@@ -128,6 +141,7 @@ impl SecretkeeperTa {
             per_boot_key,
             identity_sign_key,
             identity,
+            max_sessions,
             session_artifacts: VecDeque::new(),
             store,
         })
@@ -389,7 +403,7 @@ impl Device for SecretkeeperTa {
         shared_keys: &[Vec<u8>; 2],
         _sha256: &dyn Sha256,
     ) -> Result<(), Error> {
-        if self.session_artifacts.len() >= MAX_SESSIONS {
+        if self.session_artifacts.len() >= self.max_sessions {
             warn!("Dropping oldest session key");
             self.session_artifacts.pop_front();
         }
