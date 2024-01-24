@@ -55,6 +55,9 @@ rust_test {
         "rdroidtest.defaults",
     ],
     srcs: ["src/lib.rs"],
+    rustlibs: [
+        "libhex",
+    ],
     test_suites: ["general-tests"],
     data: ["testdata/*"],
 }
