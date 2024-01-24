@@ -18,7 +18,7 @@
 
 use crate::Error;
 use ciborium::Value;
-use coset::CborSerializable;
+use coset::{AsCborValue, CborOrdering, CborSerializable, CoseKey};
 use diced_open_dice::{DiceArtifacts, OwnedDiceArtifacts, CDI_SIZE};
 
 const EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION: u64 = 1;
@@ -44,6 +44,7 @@ impl OwnedDiceArtifactsWithExplicitKey {
     ///     DiceCertChainInitialPayload,
     ///     * DiceChainEntry
     /// ]
+    /// ; Encoded in accordance with Core Deterministic Encoding Requirements [RFC 8949 s4.2.1]
     /// DiceCertChainInitialPayload = bstr .cbor PubKeyEd25519 /
     ///     bstr .cbor PubKeyECDSA256 /
     ///     bstr .cbor PubKeyECDSA384 ; subjectPublicKey
@@ -70,8 +71,6 @@ impl DiceArtifacts for OwnedDiceArtifactsWithExplicitKey {
 // Convert a DICE chain to explicit key format. Note that this method checks if the input is
 // already in the Explicit-key format & returns it if so. The check is lightweight though.
 // A twisted incorrect dice chain input may produce incorrect output.
-// TODO(b/319613231): Sort the labels in root public key as per Core Deterministic Encoding
-// Requirements.
 fn to_explicit_chain(dice_chain_bytes: &[u8]) -> Result<Vec<u8>, Error> {
     let dice_chain = deserialize_cbor_array(dice_chain_bytes)?;
     // Check if the dice_chain is already in explicit key format
@@ -81,11 +80,16 @@ fn to_explicit_chain(dice_chain_bytes: &[u8]) -> Result<Vec<u8>, Error> {
     let mut res: Vec<Value> = Vec::with_capacity(dice_chain.len() + 1);
     let mut it = dice_chain.into_iter();
     res.push(Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION));
-    let initial_payload = it
+    let root_key = it
         .next()
         .ok_or(Error::UnexpectedItem("Empty dice chain", "dice_chain with at least 1 node"))?;
-    // Converts the root public key from .cbor COSE_KEY to .bstr .cbor COSE_KEY
-    res.push(Value::Bytes(initial_payload.to_vec()?));
+
+    // Canonicalize the root public key as per Core Deterministic Encoding Requirements
+    let mut root_key = CoseKey::from_cbor_value(root_key)?;
+    root_key.canonicalize(CborOrdering::Lexicographic);
+    // Converts to .bstr .cbor COSE_KEY
+    let root_key = root_key.to_vec()?;
+    res.push(Value::Bytes(root_key));
     res.extend(it);
     Ok(Value::Array(res).to_vec()?)
 }
@@ -119,5 +123,22 @@ mod tests {
         let explicit_chain = to_explicit_chain(implicit_dice).unwrap();
         let converted_chain = to_explicit_chain(&explicit_chain).unwrap();
         assert_eq!(explicit_chain, converted_chain);
+    }
+
+    #[rdroidtest]
+    fn root_key_deterministic_encoding() {
+        // Encoding of
+        // [{"a": 1, 3: -7, 1234: 1, 1: 1}]
+        // Notice the root key map are not ordered (in lexicographic order)!
+        const IMPLICIT_CHAIN: &str = "81A461610103261904D2010101";
+        // Encoding of
+        // [1, h'A4010103261904D201616101']
+        // where A4010103261904D201616101 =
+        //      .cbor {1: 1, 3: -7, 1234: 1, "a": 1}
+        // Notice the root key labels are in lexicographic order!
+        const EXPECTED_EXPLICIT_CHAIN: &str = "82014ca4010103261904d201616101";
+
+        let explicit_chain = to_explicit_chain(&hex::decode(IMPLICIT_CHAIN).unwrap()).unwrap();
+        assert_eq!(hex::encode(explicit_chain), EXPECTED_EXPLICIT_CHAIN);
     }
 }
