@@ -36,7 +36,7 @@
 //! 2. Greater than or equal to: Useful for setting policies that seal
 //! Anti-rollback protected entities (should be accessible to versions >= present).
 //!
-//! Dice Policy CDDL:
+//! Dice Policy CDDL (keep in sync with DicePolicy.cddl):
 //!
 //! dicePolicy = [
 //! 1, ; dice policy version
@@ -57,18 +57,19 @@
 //!
 //! value = bool / int / tstr / bstr
 
-#![allow(missing_docs)] // Sadly needed due to use of enumn::N
-
 use ciborium::Value;
-use core::matches;
 use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
-use enumn::N;
 use std::borrow::Cow;
 use std::iter::zip;
 
 type Error = String;
 
-const DICE_POLICY_VERSION: u64 = 1;
+/// Version of the Dice policy spec
+pub const DICE_POLICY_VERSION: u64 = 1;
+/// Identifier for `exactMatchConstraint` as per spec
+pub const EXACT_MATCH_CONSTRAINT: u16 = 1;
+/// Identifier for `geConstraint` as per spec
+pub const GREATER_OR_EQUAL_CONSTRAINT: u16 = 2;
 
 /// Given an Android dice chain, check if it matches the given policy. This method returns
 /// Ok(()) in case of successful match, otherwise returns error in case of failure.
@@ -80,60 +81,25 @@ pub fn chain_matches_policy(dice_chain: &[u8], policy: &[u8]) -> Result<(), Erro
     Ok(())
 }
 
-/// Constraint Types supported in Dice policy.
-#[repr(u16)]
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, N)]
-pub enum ConstraintType {
-    /// Enforce exact match criteria, indicating the policy should match
-    /// if the dice chain has exact same specified values.
-    ExactMatch = 1,
-    /// Enforce Greater than or equal to criteria. When applied on security_version, this
-    /// can be useful to set policy that matches dice chains with same or upgraded images.
-    GreaterOrEqual = 2,
-}
-
-/// ConstraintSpec is used to specify which constraint type to apply and on which all values in a
-/// DiceChainEntry. See documentation of `from_dice_chain()` for examples.
-pub struct ConstraintSpec {
-    constraint_type: ConstraintType,
-    // `path` is essentially a list of label/int.
-    // It identifies which values (in a `DiceChainEntry`) to be applying constraints on.
-    path: Vec<i64>,
-    // If set to `Ignore`, the constraint is skipped if the `path` is missing in a
-    // `DiceChainEntry` while constructing a policy. Note that this does not affect policy
-    // matching.
-    if_path_missing: MissingAction,
-}
-
-impl ConstraintSpec {
-    /// Construct the ConstraintSpec.
-    pub fn new(
-        constraint_type: ConstraintType,
-        path: Vec<i64>,
-        if_path_missing: MissingAction,
-    ) -> Self {
-        Self { constraint_type, path, if_path_missing }
-    }
-}
-
-/// Used to define a `ConstraintSpec` requirement. This allows client to set behavior of
-/// policy construction in case the `path` is missing in a `DiceChainEntry`.
-#[derive(Eq, PartialEq)]
-pub enum MissingAction {
-    /// Indicates that a constraint `path` is required in each `DiceChainEntry`. Fail if missing!
-    Fail,
-    /// Indicates that a constraint `path` may be missing in some `DiceChainEntry`. Ignore!
-    Ignore,
-}
-
 // TODO(b/291238565): Restrict (nested_)key & value type to (bool/int/tstr/bstr).
 // and maybe convert it into struct.
 /// Each constraint (on a dice node) is a tuple: (ConstraintType, constraint_path, value)
+/// This is Rust equivalent of `nodeConstraint` from CDDL above. Keep in sync!
 #[derive(Clone, Debug, PartialEq)]
-struct Constraint(u16, Vec<i64>, Value);
+pub struct Constraint(u16, Vec<i64>, Value);
 
-// Keep this in sync with [`nodeConstraint`] the CDDL above.
+impl Constraint {
+    /// Construct a new Constraint
+    pub fn new(constraint_type: u16, path: Vec<i64>, value: Value) -> Result<Self, Error> {
+        if constraint_type != EXACT_MATCH_CONSTRAINT
+            && constraint_type != GREATER_OR_EQUAL_CONSTRAINT
+        {
+            return Err(format!("Invalid Constraint type: {constraint_type}"));
+        }
+        Ok(Self(constraint_type, path, value))
+    }
+}
+
 impl AsCborValue for Constraint {
     fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
         let [constrained_type, constraint_path, val] = value
@@ -163,10 +129,10 @@ impl AsCborValue for Constraint {
 }
 
 /// List of all constraints on a dice node.
+/// This is Rust equivalent of `nodeConstraintList` in the CDDL above. Keep in sync!
 #[derive(Clone, Debug, PartialEq)]
-struct NodeConstraints(Box<[Constraint]>);
+pub struct NodeConstraints(pub Box<[Constraint]>);
 
-// Keep this in sync with [`nodeConstraintList`] in the CDDL above.
 impl AsCborValue for NodeConstraints {
     fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
         let res: Vec<Constraint> = value
@@ -192,14 +158,15 @@ impl AsCborValue for NodeConstraints {
     }
 }
 
-/// Module for working with dice policy.
+/// This is Rust equivalent of `dicePolicy` in the CDDL above. Keep in sync!
 #[derive(Clone, Debug, PartialEq)]
 pub struct DicePolicy {
-    version: u64,
-    node_constraints_list: Box<[NodeConstraints]>, // Constraint on each entry in dice chain.
+    /// Dice policy version
+    pub version: u64,
+    /// List of `NodeConstraints`, one for each node of Dice chain.
+    pub node_constraints_list: Box<[NodeConstraints]>,
 }
 
-// Keep this in sync with [`dicePolicy`] in the CDDL above.
 impl AsCborValue for DicePolicy {
     fn from_cbor_value(value: Value) -> Result<Self, CoseError> {
         let mut arr = value.into_array().map_err(|_| UnexpectedItem("-", "Array"))?;
@@ -228,80 +195,12 @@ impl AsCborValue for DicePolicy {
 impl CborSerializable for DicePolicy {}
 
 impl DicePolicy {
-    /// Construct a dice policy from a given dice chain.
-    /// This can be used by clients to construct a policy to seal secrets.
-    /// Constraints on all but (first & second) dice nodes is applied using constraint_spec
-    /// argument. For the first and second node (version and root public key), the constraint is
-    /// ExactMatch of the whole node.
-    ///
-    /// # Arguments
-    /// `dice_chain`: The serialized CBOR encoded Dice chain, adhering to Explicit-key
-    /// DiceCertChain format. See definition at ExplicitKeyDiceCertChain.cddl
-    ///
-    /// `constraint_spec`: List of constraints to be applied on dice node.
-    /// Each constraint is a ConstraintSpec object.
-    ///
-    /// Note: Dice node is treated as a nested map (& so the lookup is done in that fashion).
-    ///
-    /// Examples of constraint_spec:
-    ///  1. For exact_match on auth_hash & greater_or_equal on security_version
-    ///    constraint_spec =[
-    ///     (ConstraintType::ExactMatch, vec![AUTHORITY_HASH]),
-    ///     (ConstraintType::GreaterOrEqual, vec![CONFIG_DESC, COMPONENT_NAME]),
-    ///    ];
-    ///
-    /// 2. For hypothetical (and highly simplified) dice chain:
-    ///
-    ///    [1, ROT_KEY, [{1 : 'a', 2 : {200 : 5, 201 : 'b'}}]]
-    ///    The following can be used
-    ///    constraint_spec =[
-    ///     ConstraintSpec(ConstraintType::ExactMatch, vec![1]),         // exact_matches value 'a'
-    ///     ConstraintSpec(ConstraintType::GreaterOrEqual, vec![2, 200]),// matches any value >= 5
-    ///    ];
-    pub fn from_dice_chain(
-        explicit_key_dice_chain: &[u8],
-        constraint_spec: &[ConstraintSpec],
-    ) -> Result<Self, Error> {
-        let dice_chain = deserialize_dice_chain(explicit_key_dice_chain)?;
-        check_is_explicit_key_dice_chain(&dice_chain)?;
-        let mut constraints_list: Vec<NodeConstraints> = Vec::with_capacity(dice_chain.len());
-        let mut it = dice_chain.into_iter();
-        // 1st & 2nd dice node of Explicit-key DiceCertChain format are
-        // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload. The rest are
-        // DiceChainEntry which is a CoseSign1.
-        constraints_list.push(NodeConstraints(Box::new([Constraint(
-            ConstraintType::ExactMatch as u16,
-            Vec::new(),
-            it.next().unwrap(),
-        )])));
-
-        constraints_list.push(NodeConstraints(Box::new([Constraint(
-            ConstraintType::ExactMatch as u16,
-            Vec::new(),
-            it.next().unwrap(),
-        )])));
-
-        for (n, value) in it.enumerate() {
-            let entry = payload_value_from_cose_sign(value)
-                .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?;
-            constraints_list.push(
-                payload_to_constraints(entry, constraint_spec)
-                    .map_err(|e| format!("Unable to get constraints for payload at {n}: {e:?}"))?,
-            );
-        }
-
-        Ok(DicePolicy {
-            version: DICE_POLICY_VERSION,
-            node_constraints_list: constraints_list.into_boxed_slice(),
-        })
-    }
-
     /// Dice chain policy verifier - Compare the input dice chain against this Dice policy.
     /// The method returns Ok() if the dice chain meets the constraints set in Dice policy,
     /// otherwise returns error in case of mismatch.
     /// TODO(b/291238565) Create a separate error module for DicePolicy mismatches.
     pub fn matches_dice_chain(&self, dice_chain: &[u8]) -> Result<(), Error> {
-        let dice_chain = deserialize_dice_chain(dice_chain)?;
+        let dice_chain = deserialize_cbor_array(dice_chain)?;
         check_is_explicit_key_dice_chain(&dice_chain)?;
         if dice_chain.len() != self.node_constraints_list.len() {
             return Err(format!(
@@ -344,15 +243,15 @@ fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Resul
     let Constraint(cons_type, path, value_in_constraint) = constraint;
     let value_in_node = lookup_value_in_nested_map(dice_node, path)?
         .ok_or(format!("Value not found for constraint_path {path:?})"))?;
-    match ConstraintType::n(*cons_type).ok_or("Unexpected Constraint type")? {
-        ConstraintType::ExactMatch => {
+    match *cons_type {
+        EXACT_MATCH_CONSTRAINT => {
             if value_in_node != *value_in_constraint {
                 return Err(format!(
                     "Policy mismatch. Expected {value_in_constraint:?}; found {value_in_node:?}"
                 ));
             }
         }
-        ConstraintType::GreaterOrEqual => {
+        GREATER_OR_EQUAL_CONSTRAINT => {
             let value_in_node = value_in_node
                 .as_integer()
                 .ok_or("Mismatch type: expected a CBOR integer".to_string())?;
@@ -365,48 +264,15 @@ fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Resul
                 ));
             }
         }
+        cons_type => return Err(format!("Unexpected constraint type {cons_type:?}")),
     };
     Ok(())
 }
 
-// Take the ['payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
-// corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
-// optional, the corresponding constraint will be missing from the NodeConstraints.
-fn payload_to_constraints(
-    payload: Value,
-    constraint_spec: &[ConstraintSpec],
-) -> Result<NodeConstraints, Error> {
-    let mut node_constraints: Vec<Constraint> = Vec::with_capacity(constraint_spec.len());
-    for constraint_item in constraint_spec {
-        let constraint_path = constraint_item.path.to_vec();
-        if constraint_path.is_empty() {
-            return Err("Expected non-empty key spec".to_string());
-        }
-        match lookup_value_in_nested_map(&payload, &constraint_path)? {
-            Some(val) => {
-                let constraint =
-                    Constraint(constraint_item.constraint_type as u16, constraint_path, val);
-                node_constraints.push(constraint);
-            }
-            None => {
-                if constraint_item.if_path_missing == MissingAction::Ignore {
-                    log::warn!("Value not found for {constraint_path:?}, - skipping!")
-                } else {
-                    return Err(format!(
-                        "Value not found for : {constraint_path:?}, constraint\
-                         spec is marked to fail on missing path"
-                    ));
-                }
-            }
-        }
-    }
-    Ok(NodeConstraints(node_constraints.into_boxed_slice()))
-}
-
-// Lookup value corresponding to constraint path in nested map.
-// This function recursively calls itself.
-// The depth of recursion is limited by the size of constraint_path.
-fn lookup_value_in_nested_map(
+/// Lookup value corresponding to constraint path in nested map.
+/// This function recursively calls itself.
+/// The depth of recursion is limited by the size of constraint_path.
+pub fn lookup_value_in_nested_map(
     cbor_map: &Value,
     constraint_path: &[i64],
 ) -> Result<Option<Value>, Error> {
@@ -426,7 +292,7 @@ fn get_map_from_value(cbor_map: &Value) -> Result<Cow<Vec<(Value, Value)>>, Erro
             .map(Cow::Owned)
             .map_err(|e| format!("Expected a CBOR map: {:?}", e)),
         Value::Map(map) => Ok(Cow::Borrowed(map)),
-        _ => Err(format!("Expected a CBOR map {:?}", cbor_map)),
+        _ => Err(format!("Expected a CBOR map {cbor_map:?}")),
     }
 }
 
@@ -440,10 +306,10 @@ fn lookup_value_in_map(map: &[(Value, Value)], key: i64) -> Option<&Value> {
     None
 }
 
-// This library only works with Explicit-key DiceCertChain format. Further we require it to have
-// at least 1 DiceChainEntry. Note that this is a lightweight check so that we fail early for
-// legacy chains.
-fn check_is_explicit_key_dice_chain(dice_chain: &[Value]) -> Result<(), Error> {
+/// This library only works with Explicit-key DiceCertChain format. Further we require it to have
+/// at least 1 DiceChainEntry. Note that this is a lightweight check so that we fail early for
+/// legacy chains.
+pub fn check_is_explicit_key_dice_chain(dice_chain: &[Value]) -> Result<(), Error> {
     if matches!(dice_chain, [Value::Integer(_version), Value::Bytes(_public_key), _entry, ..]) {
         Ok(())
     } else {
@@ -452,7 +318,7 @@ fn check_is_explicit_key_dice_chain(dice_chain: &[Value]) -> Result<(), Error> {
 }
 
 /// Extract the payload from the COSE Sign
-fn payload_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
+pub fn payload_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
     let sign1 = CoseSign1::from_cbor_value(cbor)
         .map_err(|e| format!("Error extracting CoseSign1: {e:?}"))?;
     match sign1.payload {
@@ -460,12 +326,14 @@ fn payload_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
         Some(payload) => Value::from_slice(&payload).map_err(|e| format!("{e:?}")),
     }
 }
-fn deserialize_dice_chain(dice_chain_bytes: &[u8]) -> Result<Vec<Value>, Error> {
-    let dice_chain = Value::from_slice(dice_chain_bytes)
+
+/// Decode a CBOR array
+pub fn deserialize_cbor_array(cbor_array_bytes: &[u8]) -> Result<Vec<Value>, Error> {
+    let cbor_array = Value::from_slice(cbor_array_bytes)
         .map_err(|e| format!("Unable to decode top-level CBOR: {e:?}"))?;
-    let dice_chain =
-        dice_chain.into_array().map_err(|e| format!("Expected an array found: {:?}", e))?;
-    Ok(dice_chain)
+    let cbor_array =
+        cbor_array.into_array().map_err(|e| format!("Expected an array found: {e:?}"))?;
+    Ok(cbor_array)
 }
 
 // Useful to convert [`ciborium::Value`] to integer. Note we already downgrade the returned
@@ -477,259 +345,4 @@ fn value_to_integer(value: &Value) -> Result<i64, CoseError> {
         .try_into()
         .map_err(|_| CoseError::UnexpectedItem("Integer", "i64"))?;
     Ok(num)
-}
-
-#[cfg(test)]
-rdroidtest::test_main!();
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ciborium::cbor;
-    use coset::{CoseKey, Header, ProtectedHeader};
-    use rdroidtest::rdroidtest;
-
-    const AUTHORITY_HASH: i64 = -4670549;
-    const CONFIG_DESC: i64 = -4670548;
-    const COMPONENT_NAME: i64 = -70002;
-    const COMPONENT_VERSION: i64 = -70003;
-    const SECURITY_VERSION: i64 = -70005;
-    const KEY_MODE: i64 = -4670551;
-    const EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION: u64 = 1;
-
-    // Helper struct to encapsulate artifacts that are useful for unit tests.
-    struct TestArtifacts {
-        // A dice chain.
-        input_dice: Vec<u8>,
-        // A list of ConstraintSpec that can be applied on the input_dice to get a dice policy.
-        constraint_spec: Vec<ConstraintSpec>,
-        // The expected dice policy if above constraint_spec is applied to input_dice.
-        expected_dice_policy: DicePolicy,
-        // Another dice chain, which is almost same as the input_dice, but (roughly) imitates
-        // an 'updated' one, ie, some int entries are higher than corresponding entry
-        // in input_chain.
-        updated_input_dice: Vec<u8>,
-    }
-
-    impl TestArtifacts {
-        // Get an example instance of TestArtifacts. This uses a hard coded, hypothetical
-        // chain of certificates & a list of constraint_spec on this.
-        fn get_example() -> Self {
-            const EXAMPLE_NUM_1: i64 = 59765;
-            const EXAMPLE_NUM_2: i64 = 59766;
-            const EXAMPLE_STRING: &str = "testing_dice_policy";
-            const UNCONSTRAINED_STRING: &str = "unconstrained_string";
-            const ANOTHER_UNCONSTRAINED_STRING: &str = "another_unconstrained_string";
-
-            let rot_key = Value::Bytes(CoseKey::default().to_vec().unwrap());
-            let input_dice = Self::get_dice_chain_helper(
-                rot_key.clone(),
-                EXAMPLE_NUM_1,
-                EXAMPLE_STRING,
-                UNCONSTRAINED_STRING,
-            );
-
-            // Now construct constraint_spec on the input dice, note this will use the keys
-            // which are also hardcoded within the get_dice_chain_helper.
-
-            let constraint_spec = vec![
-                ConstraintSpec::new(ConstraintType::ExactMatch, vec![1], MissingAction::Fail),
-                // Notice how key "2" is (deliberately) absent in ConstraintSpec
-                // so policy should not constrain it.
-                ConstraintSpec::new(
-                    ConstraintType::GreaterOrEqual,
-                    vec![3, 100],
-                    MissingAction::Fail,
-                ),
-            ];
-            let expected_dice_policy = DicePolicy {
-                version: 1,
-                node_constraints_list: Box::new([
-                    NodeConstraints(Box::new([Constraint(
-                        ConstraintType::ExactMatch as u16,
-                        vec![],
-                        Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION),
-                    )])),
-                    NodeConstraints(Box::new([Constraint(
-                        ConstraintType::ExactMatch as u16,
-                        vec![],
-                        rot_key.clone(),
-                    )])),
-                    NodeConstraints(Box::new([
-                        Constraint(
-                            ConstraintType::ExactMatch as u16,
-                            vec![1],
-                            Value::Text(EXAMPLE_STRING.to_string()),
-                        ),
-                        Constraint(
-                            ConstraintType::GreaterOrEqual as u16,
-                            vec![3, 100],
-                            Value::from(EXAMPLE_NUM_1),
-                        ),
-                    ])),
-                ]),
-            };
-
-            let updated_input_dice = Self::get_dice_chain_helper(
-                rot_key,
-                EXAMPLE_NUM_2,
-                EXAMPLE_STRING,
-                ANOTHER_UNCONSTRAINED_STRING,
-            );
-            Self { input_dice, constraint_spec, expected_dice_policy, updated_input_dice }
-        }
-
-        // Helper method method to generate a dice chain with a given rot_key.
-        // Other arguments are ad-hoc values in the nested map. Callers use these to
-        // construct appropriate constrains in dice policies.
-        fn get_dice_chain_helper(
-            rot_key: Value,
-            version: i64,
-            constrained_string: &str,
-            unconstrained_string: &str,
-        ) -> Vec<u8> {
-            let nested_payload = cbor!({
-                100 => version
-            })
-            .unwrap();
-
-            let payload = cbor!({
-                1 => constrained_string,
-                2 => unconstrained_string,
-                3 => Value::Bytes(nested_payload.to_vec().unwrap()),
-            })
-            .unwrap();
-            let payload = payload.to_vec().unwrap();
-            let dice_node = CoseSign1 {
-                protected: ProtectedHeader::default(),
-                unprotected: Header::default(),
-                payload: Some(payload),
-                signature: b"ddef".to_vec(),
-            }
-            .to_cbor_value()
-            .unwrap();
-            let input_dice = Value::Array(vec![
-                Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION),
-                rot_key,
-                dice_node,
-            ]);
-
-            input_dice.to_vec().unwrap()
-        }
-    }
-
-    #[rdroidtest]
-    fn policy_structure_check() {
-        let example = TestArtifacts::get_example();
-        let policy =
-            DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).unwrap();
-
-        // Assert policy is exactly as expected!
-        assert_eq!(policy, example.expected_dice_policy);
-    }
-
-    #[rdroidtest]
-    fn policy_enc_dec_test() {
-        // An example dice policy
-        let dice_policy: DicePolicy = TestArtifacts::get_example().expected_dice_policy;
-        // Encode & then decode back!
-        let dice_policy_enc_dec =
-            DicePolicy::from_slice(&dice_policy.clone().to_vec().unwrap()).unwrap();
-        assert_eq!(dice_policy, dice_policy_enc_dec);
-    }
-
-    #[rdroidtest]
-    fn policy_matches_original_dice_chain() {
-        let example = TestArtifacts::get_example();
-        DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
-            .unwrap()
-            .matches_dice_chain(&example.input_dice)
-            .unwrap();
-    }
-
-    #[rdroidtest]
-    fn policy_matches_updated_dice_chain() {
-        let example = TestArtifacts::get_example();
-        DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec)
-            .unwrap()
-            .matches_dice_chain(&example.updated_input_dice)
-            .unwrap();
-    }
-
-    #[rdroidtest]
-    fn policy_mismatch_downgraded_dice_chain() {
-        let example = TestArtifacts::get_example();
-        assert!(
-            DicePolicy::from_dice_chain(&example.updated_input_dice, &example.constraint_spec)
-                .unwrap()
-                .matches_dice_chain(&example.input_dice)
-                .is_err(),
-            "The (downgraded) dice chain matched the policy constructed out of the 'updated'\
-            dice chain!!"
-        );
-    }
-
-    #[rdroidtest]
-    fn policy_constructional_required_constraint() {
-        let mut example = TestArtifacts::get_example();
-        // The constraint_path [9,8,7] is not present in example.input_dice
-        example.constraint_spec.push(ConstraintSpec::new(
-            ConstraintType::ExactMatch,
-            vec![9, 8, 7],
-            MissingAction::Fail,
-        ));
-        assert!(
-            DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).is_err(),
-            "DicePolicy creation should've failed on Required constraint"
-        );
-    }
-
-    #[rdroidtest]
-    fn policy_constructional_optional_constraint() {
-        let mut example = TestArtifacts::get_example();
-        // The constraint_path [9,8,7] is not present in example.input_dice
-        example.constraint_spec.push(ConstraintSpec::new(
-            ConstraintType::ExactMatch,
-            vec![9, 8, 7],
-            MissingAction::Ignore,
-        ));
-        // However for optional constraint, policy construction should succeed!
-        _ = DicePolicy::from_dice_chain(&example.input_dice, &example.constraint_spec).unwrap()
-    }
-
-    #[rdroidtest]
-    fn policy_dice_size_is_same() {
-        // This is the number of certs in compos bcc (including the first ROT)
-        // To analyze a bcc use hwtrust tool from /tools/security/remote_provisioning/hwtrust
-        // `hwtrust --verbose dice-chain [path]/composbcc`
-        const COMPOS_CHAIN_SIZE_EXPLICIT_KEY: usize = 6;
-        let input_dice = include_bytes!("../testdata/compos_chain_explicit");
-        let constraint_spec = [
-            ConstraintSpec::new(
-                ConstraintType::ExactMatch,
-                vec![AUTHORITY_HASH],
-                MissingAction::Fail,
-            ),
-            ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE], MissingAction::Fail),
-            ConstraintSpec::new(
-                ConstraintType::ExactMatch,
-                vec![CONFIG_DESC, COMPONENT_NAME],
-                MissingAction::Fail,
-            ),
-            ConstraintSpec::new(
-                ConstraintType::GreaterOrEqual,
-                vec![CONFIG_DESC, COMPONENT_VERSION],
-                MissingAction::Ignore,
-            ),
-            ConstraintSpec::new(
-                ConstraintType::GreaterOrEqual,
-                vec![CONFIG_DESC, SECURITY_VERSION],
-                MissingAction::Ignore,
-            ),
-        ];
-        let policy = DicePolicy::from_dice_chain(input_dice, &constraint_spec).unwrap();
-        assert_eq!(policy.node_constraints_list.len(), COMPOS_CHAIN_SIZE_EXPLICIT_KEY);
-        // Check that original dice chain matches the policy.
-        policy.matches_dice_chain(input_dice).unwrap();
-    }
 }
