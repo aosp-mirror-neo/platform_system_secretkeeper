@@ -22,7 +22,7 @@
 
 use ciborium::Value;
 use dice_policy::{
-    check_is_explicit_key_dice_chain, deserialize_cbor_array, lookup_value_in_nested_map,
+    check_is_explicit_key_dice_chain, deserialize_cbor_array, lookup_in_nested_container,
     payload_value_from_cose_sign, Constraint, DicePolicy, NodeConstraints, DICE_POLICY_VERSION,
     EXACT_MATCH_CONSTRAINT, GREATER_OR_EQUAL_CONSTRAINT,
 };
@@ -163,7 +163,7 @@ fn constraints_on_dice_node(
         if constraint_path.is_empty() {
             return Err("Expected non-empty key spec".to_string());
         }
-        match lookup_value_in_nested_map(&node_payload, &constraint_path)? {
+        match lookup_in_nested_container(&node_payload, &constraint_path)? {
             Some(val) => {
                 let constraint =
                     Constraint::new(constraint_item.constraint_type as u16, constraint_path, val)?;
