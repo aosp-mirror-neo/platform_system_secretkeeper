@@ -12,6 +12,7 @@ rust_defaults {
     rustlibs: [
         "libciborium",
         "libdice_policy",
+        "libitertools",
         "liblog_rust",
     ],
     proc_macros: ["libenumn"],
