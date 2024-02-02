@@ -119,11 +119,12 @@ impl SecretkeeperTa {
             SkInternalError::UnexpectedError
         })?;
 
-        let (identity_sign_key, pub_key) =
+        let (identity_sign_key, mut pub_key) =
             ag_impls.ecdsa.generate_key(identity_curve).map_err(|e| {
                 error!("Failed to generate {identity_curve:?} keypair: {e:?}");
                 SkInternalError::UnexpectedError
             })?;
+        pub_key.canonicalize_cose_key();
         let identity = Identity {
             version: IDENTITY_VERSION,
             cert_chain: CertChain {
