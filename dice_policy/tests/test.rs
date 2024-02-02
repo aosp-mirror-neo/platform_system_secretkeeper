@@ -18,7 +18,7 @@
 
 use ciborium::{cbor, Value};
 use coset::{AsCborValue, CborSerializable, CoseKey, CoseSign1, Header, ProtectedHeader};
-use dice_policy::{Constraint, DicePolicy, NodeConstraints};
+use dice_policy::{lookup_in_nested_container, Constraint, DicePolicy, NodeConstraints};
 use dice_policy_builder::{policy_for_dice_chain, ConstraintSpec, ConstraintType, MissingAction};
 use rdroidtest::rdroidtest;
 
@@ -268,6 +268,35 @@ fn policy_matcher_builder_in_sync() {
         dice_policy::DICE_POLICY_VERSION,
         dice_policy_builder::SUPPORTED_DICE_POLICY_VERSION
     );
+}
+#[rdroidtest]
+fn lookup_in_nested_container_test() {
+    const TARGET: &str = "TARGET";
+    let nested_container = cbor!({ // MAP
+        1 => 5,
+        2 => cbor!([                // ARRAY
+            "Index0",
+            "Index1",
+            cbor!({                 // Map
+                1 => 5,
+                2 => cbor!([        // ARRAY
+                    "Index0",
+                    "Index1",
+                    TARGET,
+                ]).unwrap(),
+            }).unwrap(),
+        ]).unwrap(),
+    })
+    .unwrap();
+    let path_present = vec![2, 2, 2, 2];
+    let path_missing1 = vec![2, 2, 2, 3];
+    let path_missing2 = vec![2, 2, 3];
+    assert_eq!(
+        lookup_in_nested_container(&nested_container, &path_present).unwrap(),
+        Some(Value::from(TARGET))
+    );
+    assert_eq!(lookup_in_nested_container(&nested_container, &path_missing1).unwrap(), None);
+    assert_eq!(lookup_in_nested_container(&nested_container, &path_missing2).unwrap(), None);
 }
 
 rdroidtest::test_main!();
