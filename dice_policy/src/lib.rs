@@ -81,7 +81,8 @@ pub fn chain_matches_policy(dice_chain: &[u8], policy: &[u8]) -> Result<(), Erro
     Ok(())
 }
 
-// TODO(b/291238565): Restrict (nested_)key & value type to (bool/int/tstr/bstr).
+// TODO(b/291238565): (nested_)key & value type should be (bool/int/tstr/bstr). Status quo, only
+// integer (nested_)key is supported.
 // and maybe convert it into struct.
 /// Each constraint (on a dice node) is a tuple: (ConstraintType, constraint_path, value)
 /// This is Rust equivalent of `nodeConstraint` from CDDL above. Keep in sync!
@@ -241,7 +242,7 @@ fn check_constraints_on_node(
 
 fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Result<(), Error> {
     let Constraint(cons_type, path, value_in_constraint) = constraint;
-    let value_in_node = lookup_value_in_nested_map(dice_node, path)?
+    let value_in_node = lookup_in_nested_container(dice_node, path)?
         .ok_or(format!("Value not found for constraint_path {path:?})"))?;
     match *cons_type {
         EXACT_MATCH_CONSTRAINT => {
@@ -269,41 +270,57 @@ fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Resul
     Ok(())
 }
 
-/// Lookup value corresponding to constraint path in nested map.
+/// Lookup value corresponding to constraint path in nested container.
 /// This function recursively calls itself.
 /// The depth of recursion is limited by the size of constraint_path.
-pub fn lookup_value_in_nested_map(
-    cbor_map: &Value,
+pub fn lookup_in_nested_container(
+    container: &Value,
     constraint_path: &[i64],
 ) -> Result<Option<Value>, Error> {
     if constraint_path.is_empty() {
-        return Ok(Some(cbor_map.clone()));
+        return Ok(Some(container.clone()));
     }
-    let explicit_map = get_map_from_value(cbor_map)?;
-    lookup_value_in_map(&explicit_map, constraint_path[0])
-        .map_or_else(|| Ok(None), |val| lookup_value_in_nested_map(val, &constraint_path[1..]))
+    let explicit_container = get_container_from_value(container)?;
+    lookup_value_in_container(&explicit_container, constraint_path[0])
+        .map_or_else(|| Ok(None), |val| lookup_in_nested_container(val, &constraint_path[1..]))
 }
 
-fn get_map_from_value(cbor_map: &Value) -> Result<Cow<Vec<(Value, Value)>>, Error> {
-    match cbor_map {
+fn get_container_from_value(container: &Value) -> Result<Container, Error> {
+    match container {
+        // Value can be Map/Array/Encoded Map. Encoded Arrays are not yet supported (or required).
+        // Note: Encoded Map is used for Configuration descriptor entry in DiceChainEntryPayload.
         Value::Bytes(b) => Value::from_slice(b)
             .map_err(|e| format!("{e:?}"))?
             .into_map()
-            .map(Cow::Owned)
+            .map(|m| Container::Map(Cow::Owned(m)))
             .map_err(|e| format!("Expected a CBOR map: {:?}", e)),
-        Value::Map(map) => Ok(Cow::Borrowed(map)),
-        _ => Err(format!("Expected a CBOR map {cbor_map:?}")),
+        Value::Map(map) => Ok(Container::Map(Cow::Borrowed(map))),
+        Value::Array(array) => Ok(Container::Array(array)),
+        _ => Err(format!("Expected an array/map/bytes {container:?}")),
     }
 }
 
-fn lookup_value_in_map(map: &[(Value, Value)], key: i64) -> Option<&Value> {
-    let key = Value::Integer(key.into());
-    for (k, v) in map.iter() {
-        if k == &key {
-            return Some(v);
+#[derive(Clone)]
+enum Container<'a> {
+    Map(Cow<'a, Vec<(Value, Value)>>),
+    Array(&'a Vec<Value>),
+}
+
+fn lookup_value_in_container<'a>(container: &'a Container<'a>, key: i64) -> Option<&'a Value> {
+    match container {
+        Container::Array(array) => array.get(key as usize),
+        Container::Map(map) => {
+            let key = Value::Integer(key.into());
+            let mut val = None;
+            for (k, v) in map.iter() {
+                if k == &key {
+                    val = Some(v);
+                    break;
+                }
+            }
+            val
         }
     }
-    None
 }
 
 /// This library only works with Explicit-key DiceCertChain format. Further we require it to have
