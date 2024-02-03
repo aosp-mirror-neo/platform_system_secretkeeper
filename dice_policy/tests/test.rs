@@ -19,7 +19,10 @@
 use ciborium::{cbor, Value};
 use coset::{AsCborValue, CborSerializable, CoseKey, CoseSign1, Header, ProtectedHeader};
 use dice_policy::{lookup_in_nested_container, Constraint, DicePolicy, NodeConstraints};
-use dice_policy_builder::{policy_for_dice_chain, ConstraintSpec, ConstraintType, MissingAction};
+use dice_policy_builder::{
+    policy_for_dice_chain, CertIndex, ConstraintSpec, ConstraintType, MissingAction,
+    WILDCARD_FULL_ARRAY,
+};
 use rdroidtest::rdroidtest;
 
 const AUTHORITY_HASH: i64 = -4670549;
@@ -53,6 +56,8 @@ impl TestArtifacts {
         const EXAMPLE_STRING: &str = "testing_dice_policy";
         const UNCONSTRAINED_STRING: &str = "unconstrained_string";
         const ANOTHER_UNCONSTRAINED_STRING: &str = "another_unconstrained_string";
+        const CONSTRAINED_ARRAY: [&str; 4] = ["Array", "IN", "LAST", "DICE_CHAIN_ENTRY"];
+        let constrained_array = cbor!(CONSTRAINED_ARRAY).unwrap();
 
         let rot_key = Value::Bytes(CoseKey::default().to_vec().unwrap());
         let input_dice = Self::get_dice_chain_helper(
@@ -60,33 +65,53 @@ impl TestArtifacts {
             EXAMPLE_NUM_1,
             EXAMPLE_STRING,
             UNCONSTRAINED_STRING,
+            constrained_array.clone(),
         );
 
         // Now construct constraint_spec on the input dice, note this will use the keys
         // which are also hardcoded within the get_dice_chain_helper.
 
         let constraint_spec = vec![
-            ConstraintSpec::new(ConstraintType::ExactMatch, vec![1], MissingAction::Fail),
+            ConstraintSpec::new(
+                ConstraintType::ExactMatch,
+                vec![1],
+                MissingAction::Fail,
+                CertIndex::All,
+            ),
             // Notice how key "2" is (deliberately) absent in ConstraintSpec
             // so policy should not constrain it.
-            ConstraintSpec::new(ConstraintType::GreaterOrEqual, vec![3, 100], MissingAction::Fail),
+            ConstraintSpec::new(
+                ConstraintType::GreaterOrEqual,
+                vec![3, 100],
+                MissingAction::Fail,
+                CertIndex::All,
+            ),
+            ConstraintSpec::new(
+                ConstraintType::ExactMatch,
+                vec![4, WILDCARD_FULL_ARRAY],
+                MissingAction::Fail,
+                CertIndex::FromEnd(0), // Constrain the last dice chain entry only!
+            ),
         ];
         let expected_dice_policy = DicePolicy {
             version: 1,
             node_constraints_list: Box::new([
                 NodeConstraints(Box::new([Constraint::new(
+                    // 1st Node -> version
                     ConstraintType::ExactMatch as u16,
                     vec![],
                     Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION),
                 )
                 .unwrap()])),
                 NodeConstraints(Box::new([Constraint::new(
+                    // 2nd Node -> root key encoding
                     ConstraintType::ExactMatch as u16,
                     vec![],
                     rot_key.clone(),
                 )
                 .unwrap()])),
                 NodeConstraints(Box::new([
+                    // 3rd Node -> DiceChainEntry 0
                     Constraint::new(
                         ConstraintType::ExactMatch as u16,
                         vec![1],
@@ -100,6 +125,45 @@ impl TestArtifacts {
                     )
                     .unwrap(),
                 ])),
+                NodeConstraints(Box::new([
+                    // 4rd Node -> DiceChainEntry 1 (Also 0th from last)
+                    Constraint::new(
+                        ConstraintType::ExactMatch as u16,
+                        vec![1],
+                        Value::Text(EXAMPLE_STRING.to_string()),
+                    )
+                    .unwrap(),
+                    Constraint::new(
+                        ConstraintType::GreaterOrEqual as u16,
+                        vec![3, 100],
+                        Value::from(EXAMPLE_NUM_1),
+                    )
+                    .unwrap(),
+                    Constraint::new(
+                        ConstraintType::ExactMatch as u16,
+                        vec![4, 0],
+                        Value::from(CONSTRAINED_ARRAY[0]),
+                    )
+                    .unwrap(),
+                    Constraint::new(
+                        ConstraintType::ExactMatch as u16,
+                        vec![4, 1],
+                        Value::from(CONSTRAINED_ARRAY[1]),
+                    )
+                    .unwrap(),
+                    Constraint::new(
+                        ConstraintType::ExactMatch as u16,
+                        vec![4, 2],
+                        Value::from(CONSTRAINED_ARRAY[2]),
+                    )
+                    .unwrap(),
+                    Constraint::new(
+                        ConstraintType::ExactMatch as u16,
+                        vec![4, 3],
+                        Value::from(CONSTRAINED_ARRAY[3]),
+                    )
+                    .unwrap(),
+                ])),
             ]),
         };
 
@@ -108,6 +172,7 @@ impl TestArtifacts {
             EXAMPLE_NUM_2,
             EXAMPLE_STRING,
             ANOTHER_UNCONSTRAINED_STRING,
+            constrained_array,
         );
         Self { input_dice, constraint_spec, expected_dice_policy, updated_input_dice }
     }
@@ -120,23 +185,41 @@ impl TestArtifacts {
         version: i64,
         constrained_string: &str,
         unconstrained_string: &str,
+        constrained_array: Value,
     ) -> Vec<u8> {
         let nested_payload = cbor!({
             100 => version
         })
         .unwrap();
 
-        let payload = cbor!({
+        let payload0 = cbor!({
+            1 => constrained_string,
+            2 => unconstrained_string,
+            3 => Value::Bytes(nested_payload.clone().to_vec().unwrap()),
+        })
+        .unwrap();
+        let payload0 = payload0.clone().to_vec().unwrap();
+        let dice_chain_entry0 = CoseSign1 {
+            protected: ProtectedHeader::default(),
+            unprotected: Header::default(),
+            payload: Some(payload0),
+            signature: b"ddef".to_vec(),
+        }
+        .to_cbor_value()
+        .unwrap();
+
+        let payload1 = cbor!({
             1 => constrained_string,
             2 => unconstrained_string,
             3 => Value::Bytes(nested_payload.to_vec().unwrap()),
+            4 => constrained_array
         })
         .unwrap();
-        let payload = payload.to_vec().unwrap();
-        let dice_node = CoseSign1 {
+        let payload1 = payload1.clone().to_vec().unwrap();
+        let dice_chain_entry1 = CoseSign1 {
             protected: ProtectedHeader::default(),
             unprotected: Header::default(),
-            payload: Some(payload),
+            payload: Some(payload1),
             signature: b"ddef".to_vec(),
         }
         .to_cbor_value()
@@ -144,7 +227,8 @@ impl TestArtifacts {
         let input_dice = Value::Array(vec![
             Value::from(EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION),
             rot_key,
-            dice_node,
+            dice_chain_entry0,
+            dice_chain_entry1,
         ]);
 
         input_dice.to_vec().unwrap()
@@ -209,6 +293,7 @@ fn policy_constructional_required_constraint() {
         ConstraintType::ExactMatch,
         vec![9, 8, 7],
         MissingAction::Fail,
+        CertIndex::All,
     ));
     assert!(
         policy_for_dice_chain(&example.input_dice, &example.constraint_spec).is_err(),
@@ -224,6 +309,7 @@ fn policy_constructional_optional_constraint() {
         ConstraintType::ExactMatch,
         vec![9, 8, 7],
         MissingAction::Ignore,
+        CertIndex::All,
     ));
     // However for optional constraint, policy construction should succeed!
     _ = policy_for_dice_chain(&example.input_dice, &example.constraint_spec).unwrap()
@@ -237,22 +323,35 @@ fn policy_dice_size_is_same() {
     const COMPOS_CHAIN_SIZE_EXPLICIT_KEY: usize = 6;
     let input_dice = include_bytes!("./testdata/compos_chain_explicit");
     let constraint_spec = [
-        ConstraintSpec::new(ConstraintType::ExactMatch, vec![AUTHORITY_HASH], MissingAction::Fail),
-        ConstraintSpec::new(ConstraintType::ExactMatch, vec![KEY_MODE], MissingAction::Fail),
+        ConstraintSpec::new(
+            ConstraintType::ExactMatch,
+            vec![AUTHORITY_HASH],
+            MissingAction::Fail,
+            CertIndex::All,
+        ),
+        ConstraintSpec::new(
+            ConstraintType::ExactMatch,
+            vec![KEY_MODE],
+            MissingAction::Fail,
+            CertIndex::All,
+        ),
         ConstraintSpec::new(
             ConstraintType::ExactMatch,
             vec![CONFIG_DESC, COMPONENT_NAME],
             MissingAction::Fail,
+            CertIndex::All,
         ),
         ConstraintSpec::new(
             ConstraintType::GreaterOrEqual,
             vec![CONFIG_DESC, COMPONENT_VERSION],
             MissingAction::Ignore,
+            CertIndex::All,
         ),
         ConstraintSpec::new(
             ConstraintType::GreaterOrEqual,
             vec![CONFIG_DESC, SECURITY_VERSION],
             MissingAction::Ignore,
+            CertIndex::All,
         ),
     ];
     let policy = policy_for_dice_chain(input_dice, &constraint_spec).unwrap();
