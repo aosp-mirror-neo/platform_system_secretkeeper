@@ -27,12 +27,17 @@ use dice_policy::{
     EXACT_MATCH_CONSTRAINT, GREATER_OR_EQUAL_CONSTRAINT,
 };
 use enumn::N;
+use itertools::Either;
+use std::borrow::Cow;
+use std::iter::once;
 
 type Error = String;
 
 /// Supported version of dice policy spec.
 pub const SUPPORTED_DICE_POLICY_VERSION: u64 = 1;
-
+/// Wildcard key to specify all indexes of an array in a nested container. The library only
+/// supports 1 Wildcard key per `ConstraintSpec`.
+pub const WILDCARD_FULL_ARRAY: i64 = -1;
 /// Constraint Types supported in Dice policy.
 #[repr(u16)]
 #[non_exhaustive]
@@ -46,17 +51,21 @@ pub enum ConstraintType {
     GreaterOrEqual = GREATER_OR_EQUAL_CONSTRAINT,
 }
 
-/// ConstraintSpec is used to specify which constraint type to apply and on which all values in a
-/// DiceChainEntry. See documentation of `policy_for_dice_chain()` for examples.
+/// ConstraintSpec is used to specify which constraint type to apply and on which all paths in a
+/// DiceChainEntry.
+/// See documentation of `policy_for_dice_chain()` for examples.
+#[derive(Clone)]
 pub struct ConstraintSpec {
     constraint_type: ConstraintType,
-    // `path` is essentially a list of label/int.
-    // It identifies which values (in a DiceChainEntry) to be applying constraints on.
+    // `path` is essentially a series of indexes (of map keys or array positions) to locate a
+    // particular value nested inside a DiceChainEntry.
     path: Vec<i64>,
     // If set to `Ignore`, the constraint is skipped if the `path` is missing in a
     // DiceChainEntry while constructing a policy. Note that this does not affect policy
     // matching.
     if_path_missing: MissingAction,
+    // Which DiceChainEntry to apply the constraint on.
+    target_entry: CertIndex,
 }
 
 impl ConstraintSpec {
@@ -66,14 +75,87 @@ impl ConstraintSpec {
         constraint_type: ConstraintType,
         path: Vec<i64>,
         if_path_missing: MissingAction,
+        target_entry: CertIndex,
     ) -> Self {
-        Self { constraint_type, path, if_path_missing }
+        Self { constraint_type, path, if_path_missing, target_entry }
     }
+
+    fn has_wildcard_entry(&self) -> bool {
+        self.path.contains(&WILDCARD_FULL_ARRAY)
+    }
+
+    // Expand the ConstrainSpec into an iterable list. This expand to 1 or more specs depending
+    // on presence of Wildcard entry.
+    fn expand(
+        &self,
+        node_payload: &Value,
+    ) -> impl Iterator<Item = Result<Cow<ConstraintSpec>, Error>> {
+        if self.has_wildcard_entry() {
+            expand_wildcard_entry(self, node_payload).map_or_else(
+                |e| Either::Left(once(Err(e))),
+                |cs| Either::Right(cs.into_iter().map(|c| Ok(Cow::Owned(c)))),
+            )
+        } else {
+            Either::Left(once(Ok(Cow::Borrowed(self))))
+        }
+    }
+}
+
+/// Indicates index of a DiceChainEntry in the chain. Note this covers only DiceChainEntries in
+/// ExplicitKeyDiceCertChain, ie, this does not include the first 2 dice nodes.
+#[derive(Clone, PartialEq, Eq)]
+pub enum CertIndex {
+    /// All Entries
+    All,
+    /// Specify the index relative to the end of the chain. FromEnd(0) => last DiceChainEntry
+    FromEnd(usize),
+}
+
+fn is_target_node(node_pos_from_end: usize, spec: &ConstraintSpec) -> bool {
+    spec.target_entry == CertIndex::All
+        || spec.target_entry == CertIndex::FromEnd(node_pos_from_end)
+}
+
+// Position of the first index marked `WILDCARD_FULL_ARRAY` in path.
+fn wildcard_position(path: &[i64]) -> Result<usize, Error> {
+    let Some(pos) = path.iter().position(|&key| key == WILDCARD_FULL_ARRAY) else {
+        return Err("InvalidInput: Path does not have wildcard key".to_string());
+    };
+    Ok(pos)
+}
+
+// Size of array at specified `path` in the nested container.
+fn size_of_array_in_nested_container(container: &Value, path: &[i64]) -> Result<usize, Error> {
+    if let Some(Value::Array(array)) = lookup_in_nested_container(container, path)? {
+        Ok(array.len())
+    } else {
+        Err("InternalError: Expected nested array not found".to_string())
+    }
+}
+
+// Expand `ConstraintSpec` containing `WILDCARD_FULL_ARRAY` to entries with path covering each
+// array index.
+fn expand_wildcard_entry(
+    spec: &ConstraintSpec,
+    target_node: &Value,
+) -> Result<Vec<ConstraintSpec>, Error> {
+    let pos = wildcard_position(&spec.path)?;
+    // Notice depth of the array in nested container is same as the position in path.
+    let size = size_of_array_in_nested_container(target_node, &spec.path[..pos])?;
+    Ok((0..size as i64).map(|i| replace_key(spec, pos, i)).collect())
+}
+
+// Get a ConstraintSpec same as `spec` except for changing the key at `pos` in its `path`
+// This method panics if `pos` in out of index of path.
+fn replace_key(spec: &ConstraintSpec, pos: usize, new_key: i64) -> ConstraintSpec {
+    let mut spec: ConstraintSpec = spec.clone();
+    spec.path[pos] = new_key;
+    spec
 }
 
 /// Used to define a `ConstraintSpec` requirement. This allows client to set behavior of
 /// policy construction in case the `path` is missing in a DiceChainEntry.
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum MissingAction {
     /// Indicates that a constraint `path` is required in each DiceChainEntry. Fail if missing!
     Fail,
@@ -119,10 +201,11 @@ pub fn policy_for_dice_chain(
     let dice_chain = deserialize_cbor_array(explicit_key_dice_chain)?;
     check_is_explicit_key_dice_chain(&dice_chain)?;
     let mut constraints_list: Vec<NodeConstraints> = Vec::with_capacity(dice_chain.len());
-    let mut it = dice_chain.into_iter();
     // 1st & 2nd dice node of Explicit-key DiceCertChain format are
     // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload. The rest are
     // DiceChainEntry which is a CoseSign1.
+    let chain_entries_len = dice_chain.len() - 2;
+    let mut it = dice_chain.into_iter();
     constraints_list.push(NodeConstraints(Box::new([Constraint::new(
         ConstraintType::ExactMatch as u16,
         Vec::new(),
@@ -134,13 +217,13 @@ pub fn policy_for_dice_chain(
         Vec::new(),
         it.next().unwrap(),
     )?])));
-
-    for (n, value) in it.enumerate() {
-        let entry = payload_value_from_cose_sign(value)
-            .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?;
+    for (i, chain_entry) in it.enumerate() {
+        let entry = payload_value_from_cose_sign(chain_entry)
+            .map_err(|e| format!("Unable to get Cose payload at {i}: {e:?}"))?;
+        let node_pos_from_end = chain_entries_len - i - 1;
         constraints_list.push(
-            constraints_on_dice_node(entry, constraint_spec)
-                .map_err(|e| format!("Unable to get constraints for payload at {n}: {e:?}"))?,
+            constraints_on_dice_node(entry, constraint_spec, node_pos_from_end)
+                .map_err(|e| format!("Unable to get constraints for payload at {i}: {e:?}"))?,
         );
     }
 
@@ -153,33 +236,53 @@ pub fn policy_for_dice_chain(
 // Take the ['node_payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
 // corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
 // `MissingAction::Ignore`, the corresponding constraint will be missing from the NodeConstraints.
+// Not all constraint_spec applies to all DiceChainEntries. `pos_from_end` is the index of the
+// DiceChainEntry relative to end & that is used to skip constraint_spec if not applicable.
 fn constraints_on_dice_node(
     node_payload: Value,
     constraint_spec: &[ConstraintSpec],
+    pos_from_end: usize,
 ) -> Result<NodeConstraints, Error> {
-    let mut node_constraints: Vec<Constraint> = Vec::with_capacity(constraint_spec.len());
+    let mut node_constraints: Vec<Constraint> = Vec::new();
+    // Some constraint spec may have wildcard entries, expand those!
+    let constraint_spec = constraint_spec
+        .iter()
+        .filter(|c| is_target_node(pos_from_end, c))
+        .flat_map(|c| c.expand(&node_payload))
+        .collect::<Result<Vec<_>, _>>()?;
     for constraint_item in constraint_spec {
-        let constraint_path = constraint_item.path.to_vec();
-        if constraint_path.is_empty() {
-            return Err("Expected non-empty key spec".to_string());
-        }
-        match lookup_in_nested_container(&node_payload, &constraint_path)? {
-            Some(val) => {
-                let constraint =
-                    Constraint::new(constraint_item.constraint_type as u16, constraint_path, val)?;
-                node_constraints.push(constraint);
-            }
-            None => {
-                if constraint_item.if_path_missing == MissingAction::Ignore {
-                    log::warn!("Value not found for {constraint_path:?}, - skipping!")
-                } else {
-                    return Err(format!(
-                        "Value not found for : {constraint_path:?}, constraint\
-                         spec is marked to fail on missing path"
-                    ));
-                }
-            }
+        if let Some(constraint) = constraint_on_dice_node(&node_payload, &constraint_item)? {
+            node_constraints.push(constraint);
         }
     }
     Ok(NodeConstraints(node_constraints.into_boxed_slice()))
+}
+
+fn constraint_on_dice_node(
+    node_payload: &Value,
+    constraint_spec: &ConstraintSpec,
+) -> Result<Option<Constraint>, Error> {
+    if constraint_spec.path.is_empty() {
+        return Err("Expected non-empty key spec".to_string());
+    }
+    let constraint = match lookup_in_nested_container(node_payload, &constraint_spec.path)? {
+        Some(val) => Some(Constraint::new(
+            constraint_spec.constraint_type as u16,
+            constraint_spec.path.to_vec(),
+            val,
+        )?),
+        None => {
+            if constraint_spec.if_path_missing == MissingAction::Ignore {
+                log::warn!("Value not found for {:?}, - skipping!", constraint_spec.path);
+                None
+            } else {
+                return Err(format!(
+                    "Value not found for : {:?}, constraint\
+                     spec is marked to fail on missing path",
+                    constraint_spec.path
+                ));
+            }
+        }
+    };
+    Ok(constraint)
 }
