@@ -59,7 +59,7 @@ pub trait Request {
     /// Construct the [`Request`] struct from given [`RequestPacket`].
     fn deserialize_from_packet(packet: RequestPacket) -> Result<Box<Self>, Error> {
         let mut req = packet.into_inner();
-        if req.get(0) != Some(&Value::from(Self::OPCODE as u16)) {
+        if req.first() != Some(&Value::from(Self::OPCODE as u16)) {
             return Err(Error::RequestMalformed);
         }
         req.remove(0);
