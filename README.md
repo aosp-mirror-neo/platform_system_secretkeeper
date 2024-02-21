@@ -254,8 +254,8 @@ PubKeyECDSA256 / PubKeyECDSA384 as defined in
 [generateCertificateRequestV2.cddl][pubkeycddl].
 
 Microdroid expects the public key to be present in the Linux device tree as the
-value of the `secretkeeper-key` property of the `/avf` node - exposed to
-userspace at `/sys/firmware/devicetree/base/avf/secretkeeper-key`.
+value of the `secretkeeper_public_key` property of the `/avf` node - exposed to
+userspace at `/proc/device-tree/avf/secretkeeper_public_key`.
 
 When a protected VM is started, AVF populates this property in the VM DT `/avf`
 node from the corresponding property in the `/avf/reference/avf` node in the
