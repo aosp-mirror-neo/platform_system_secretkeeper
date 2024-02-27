@@ -34,6 +34,7 @@ rust_defaults {
         "libbinder_rs",
         "libciborium",
         "libcoset",
+        "libhex",
         "libdiced_open_dice",
         // TODO(b/315464358): Use the std version
         "libsecretkeeper_comm_nostd",

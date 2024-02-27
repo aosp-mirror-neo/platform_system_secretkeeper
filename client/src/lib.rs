@@ -37,6 +37,7 @@ use secretkeeper_core::cipher;
 use secretkeeper_comm::data_types::SeqNum;
 use secretkeeper_comm::wire::ApiError;
 use std::cell::RefCell;
+use std::fmt;
 use std::rc::Rc;
 
 /// A Secretkeeper session that can be used by client, this encapsulates the Authgraph Key exchange
@@ -128,6 +129,12 @@ impl SkSession {
     /// Get the session_id.
     pub fn session_id(&self) -> &[u8] {
         &self.session_id
+    }
+}
+
+impl fmt::Debug for SkSession {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SkSession").field("session_id", &hex::encode(&self.session_id)).finish()
     }
 }
 
