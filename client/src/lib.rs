@@ -32,7 +32,7 @@ use android_hardware_security_authgraph::aidl::android::hardware::security::auth
     IAuthGraphKeyExchange::IAuthGraphKeyExchange, PlainPubKey::PlainPubKey, PubKey::PubKey,
     SessionIdSignature::SessionIdSignature, Identity::Identity,
 };
-use coset::{CborSerializable, CoseEncrypt0};
+use coset::{CoseKey, CborSerializable, CoseEncrypt0};
 use secretkeeper_core::cipher;
 use secretkeeper_comm::data_types::SeqNum;
 use secretkeeper_comm::wire::ApiError;
@@ -56,11 +56,20 @@ pub struct SkSession {
 impl SkSession {
     /// Create a new Secretkeeper session. This triggers an AuthgraphKeyExchange protocol with a
     /// local `source` and remote `sink`.
+    ///
+    /// # Arguments
+    /// `sk`: Secretkeeper instance
+    ///
+    /// `dice`: DiceArtifacts of the caller (i.e, Sk client)
+    ///
+    /// `expected_sk_key`: Expected Identity of Secretkeeper. If set, the claimed peer identity is
+    /// matched against this and in cases of mismatch, error is returned.
     pub fn new(
         sk: binder::Strong<dyn ISecretkeeper>,
         dice: &OwnedDiceArtifactsWithExplicitKey,
+        expected_sk_key: Option<CoseKey>,
     ) -> Result<Self, Error> {
-        let ag_dev = Rc::new(RefCell::new(AgDevice::new(dice)?));
+        let ag_dev = Rc::new(RefCell::new(AgDevice::new(dice, expected_sk_key)?));
         let ([encryption_key, decryption_key], session_id) =
             authgraph_key_exchange(sk.clone(), ag_dev.clone())?;
         Ok(Self {
