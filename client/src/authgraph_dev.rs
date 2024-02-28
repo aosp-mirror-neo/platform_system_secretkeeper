@@ -26,15 +26,15 @@ use authgraph_core::ag_err;
 use authgraph_core::error::Error as AgError;
 use authgraph_core::error::Error;
 use authgraph_core::key::{
-    AesKey, CertChain, EcSignKey, Identity, IdentityVerificationDecision, CURVE25519_PRIV_KEY_LEN,
-    IDENTITY_VERSION,
+    AesKey, CertChain, EcSignKey, EcVerifyKey, Identity, IdentityVerificationDecision,
+    CURVE25519_PRIV_KEY_LEN, IDENTITY_VERSION,
 };
 use authgraph_core::traits;
 use authgraph_core::traits::AG_KEY_EXCHANGE_PROTOCOL_VERSION_1;
-use authgraph_core::traits::{AesGcm, Device};
+use authgraph_core::traits::{AesGcm, Device, EcDsa};
 use authgraph_wire::{ErrorCode, SESSION_ID_LEN};
-use coset::iana;
 use coset::CborSerializable;
+use coset::{iana, CoseKey};
 use diced_open_dice::derive_cdi_leaf_priv;
 
 /// Implementation of `authgraph_core::traits::Device` required for configuring the local
@@ -42,12 +42,16 @@ use diced_open_dice::derive_cdi_leaf_priv;
 pub struct AgDevice {
     per_boot_key: AesKey,
     identity: (EcSignKey, Identity),
+    expected_peer_key: Option<CoseKey>,
 }
 
 impl AgDevice {
     const AG_KE_VERSION: i32 = AG_KEY_EXCHANGE_PROTOCOL_VERSION_1;
     /// Create a new `AgDevice`, using dice_artifacts for `Identity`.
-    pub fn new(dice_artifacts: &OwnedDiceArtifactsWithExplicitKey) -> Result<Self, AgError> {
+    pub fn new(
+        dice_artifacts: &OwnedDiceArtifactsWithExplicitKey,
+        expected_peer_key: Option<CoseKey>,
+    ) -> Result<Self, AgError> {
         let cdi_leaf_priv = derive_cdi_leaf_priv(dice_artifacts)
             .map_err(|_| ag_err!(InternalError, "Failed to get private key"))?;
         let identity = Identity {
@@ -80,6 +84,7 @@ impl AgDevice {
                 ),
                 identity,
             ),
+            expected_peer_key,
         })
     }
 }
@@ -140,15 +145,37 @@ impl Device for AgDevice {
         Ok(())
     }
 
+    fn validate_peer_identity(
+        &self,
+        identity: &Identity,
+        ecdsa: &dyn EcDsa,
+    ) -> Result<EcVerifyKey, Error> {
+        if identity.cert_chain.dice_cert_chain.is_some() {
+            return Err(ag_err!(InvalidPeerKeKey, "Expected peer's DICE chain to be None"));
+        }
+        let root_key = identity.validate(ecdsa)?;
+
+        if let Some(expected_key) = &self.expected_peer_key {
+            // Do bit by bit comparison of the keys. This assumes the 2 keys are equivalently
+            // canonicalized
+            if root_key.get_key_ref() != expected_key {
+                return Err(ag_err!(
+                    InvalidPeerKeKey,
+                    "Peer identity did not match the expected identity"
+                ));
+            }
+        }
+        Ok(root_key)
+    }
+
     fn validate_shared_sessions(
         &self,
         _peer_identity: &Identity,
         _session_id: &[u8; SESSION_ID_LEN],
         _shared_keys: &[Vec<u8>],
         _sha256: &dyn traits::Sha256,
-    ) -> Result<(), AgError> {
-        // TODO(b/291232226): Ensure the peer is "real" Secretkeeper, by validating the identity
-        // against a trusted source.
+    ) -> Result<(), Error> {
+        // Currently, there is no use of validation of shared session to application protocol.
         Ok(())
     }
 }
