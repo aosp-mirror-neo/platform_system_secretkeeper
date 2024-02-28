@@ -20,6 +20,7 @@ use crate::Error;
 use ciborium::Value;
 use coset::{AsCborValue, CborOrdering, CborSerializable, CoseKey};
 use diced_open_dice::{DiceArtifacts, OwnedDiceArtifacts, CDI_SIZE};
+use std::fmt;
 
 const EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION: u64 = 1;
 
@@ -51,6 +52,12 @@ impl OwnedDiceArtifactsWithExplicitKey {
     /// Note: Extracted from the spec at ExplicitKeyDiceCertChain.cddl. Keep in sync!
     pub fn explicit_key_dice_chain(&self) -> Option<&[u8]> {
         self.explicit_key_dice_chain.as_deref()
+    }
+}
+
+impl fmt::Debug for OwnedDiceArtifactsWithExplicitKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Sensitive information omitted")
     }
 }
 
