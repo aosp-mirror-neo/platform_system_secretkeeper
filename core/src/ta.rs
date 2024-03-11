@@ -53,7 +53,7 @@ pub mod bootloader;
 const CURRENT_VERSION: u64 = 1;
 
 /// Default maximum number of live session keys.
-const MAX_SESSIONS_DEFAULT: usize = 8;
+const MAX_SESSIONS_DEFAULT: usize = 4;
 
 /// Macro to build an [`ApiError`] instance.
 /// E.g. use: `aidl_err!(InternalError, "some {} format", arg)`.
