@@ -10,6 +10,9 @@
       "name": "VtsSecretkeeperTargetTest"
     },
     {
+      "name": "libdice_policy.test"
+    },
+    {
       "name": "libsecretkeeper_client.test"
     },
     {
