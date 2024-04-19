@@ -439,7 +439,7 @@ impl Device for SecretkeeperTa {
         _shared_keys: &[Vec<u8>],
         _sha256: &dyn Sha256,
     ) -> Result<(), Error> {
-        // TODO: implement
+        // Secretkeeper does not need to validate shared session after successful Key Exchange.
         Ok(())
     }
 }
