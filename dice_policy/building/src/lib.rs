@@ -265,19 +265,34 @@ fn constraint_on_dice_node(
     if constraint_spec.path.is_empty() {
         return Err("Expected non-empty key spec".to_string());
     }
-    let constraint = match lookup_in_nested_container(node_payload, &constraint_spec.path)? {
-        Some(val) => Some(Constraint::new(
+    let constraint = match lookup_in_nested_container(node_payload, &constraint_spec.path) {
+        Ok(Some(val)) => Some(Constraint::new(
             constraint_spec.constraint_type as u16,
             constraint_spec.path.to_vec(),
             val,
         )?),
-        None => {
+        Ok(None) => {
             if constraint_spec.if_path_missing == MissingAction::Ignore {
                 log::warn!("Value not found for {:?}, - skipping!", constraint_spec.path);
                 None
             } else {
                 return Err(format!(
                     "Value not found for : {:?}, constraint\
+                     spec is marked to fail on missing path",
+                    constraint_spec.path
+                ));
+            }
+        }
+        Err(e) => {
+            if constraint_spec.if_path_missing == MissingAction::Ignore {
+                log::warn!(
+                    "Error ({e:?}) getting Value for {:?}, - skipping!",
+                    constraint_spec.path
+                );
+                None
+            } else {
+                return Err(format!(
+                    "Error ({e:?}) getting Value for {:?}, constraint\
                      spec is marked to fail on missing path",
                     constraint_spec.path
                 ));
