@@ -15,12 +15,11 @@
  */
 
 //! Test libsdice_policy_builder & libdice_policy. Uses `rdroidtest` attribute macro.
-
 use ciborium::{cbor, Value};
 use coset::{AsCborValue, CborSerializable, CoseKey, CoseSign1, Header, ProtectedHeader};
 use dice_policy::{lookup_in_nested_container, Constraint, DicePolicy, NodeConstraints};
 use dice_policy_builder::{
-    policy_for_dice_chain, CertIndex, ConstraintSpec, ConstraintType, MissingAction,
+    policy_for_dice_chain, ConstraintSpec, ConstraintType, MissingAction, TargetEntry,
     WILDCARD_FULL_ARRAY,
 };
 use rdroidtest::rdroidtest;
@@ -32,6 +31,8 @@ const COMPONENT_VERSION: i64 = -70003;
 const SECURITY_VERSION: i64 = -70005;
 const KEY_MODE: i64 = -4670551;
 const EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION: u64 = 1;
+const COMPOS_CHAIN_SIZE_EXPLICIT_KEY: usize = 6;
+const EXAMPLE_COMPONENT_NAME: &str = "example_component_name";
 
 // Helper struct to encapsulate artifacts that are useful for unit tests.
 struct TestArtifacts {
@@ -76,7 +77,7 @@ impl TestArtifacts {
                 ConstraintType::ExactMatch,
                 vec![1],
                 MissingAction::Fail,
-                CertIndex::All,
+                TargetEntry::All,
             ),
             // Notice how key "2" is (deliberately) absent in ConstraintSpec
             // so policy should not constrain it.
@@ -84,13 +85,15 @@ impl TestArtifacts {
                 ConstraintType::GreaterOrEqual,
                 vec![3, 100],
                 MissingAction::Fail,
-                CertIndex::All,
+                TargetEntry::All,
             ),
             ConstraintSpec::new(
                 ConstraintType::ExactMatch,
                 vec![4, WILDCARD_FULL_ARRAY],
                 MissingAction::Fail,
-                CertIndex::FromEnd(0), // Constrain the last dice chain entry only!
+                // Notice although 2 DiceChainEntries have the same component name, only the last
+                // one is expected to be constrained in the DicePolicy.
+                TargetEntry::ByName(EXAMPLE_COMPONENT_NAME.to_string()),
             ),
         ];
         let expected_dice_policy = DicePolicy {
@@ -196,6 +199,7 @@ impl TestArtifacts {
             1 => constrained_string,
             2 => unconstrained_string,
             3 => Value::Bytes(nested_payload.clone().to_vec().unwrap()),
+            CONFIG_DESC => {COMPONENT_NAME => EXAMPLE_COMPONENT_NAME}
         })
         .unwrap();
         let payload0 = payload0.clone().to_vec().unwrap();
@@ -212,7 +216,8 @@ impl TestArtifacts {
             1 => constrained_string,
             2 => unconstrained_string,
             3 => Value::Bytes(nested_payload.to_vec().unwrap()),
-            4 => constrained_array
+            4 => constrained_array,
+            CONFIG_DESC => {COMPONENT_NAME => EXAMPLE_COMPONENT_NAME}
         })
         .unwrap();
         let payload1 = payload1.clone().to_vec().unwrap();
@@ -238,7 +243,7 @@ impl TestArtifacts {
 #[rdroidtest]
 fn policy_structure_check() {
     let example = TestArtifacts::get_example();
-    let policy = policy_for_dice_chain(&example.input_dice, &example.constraint_spec).unwrap();
+    let policy = policy_for_dice_chain(&example.input_dice, example.constraint_spec).unwrap();
 
     // Assert policy is exactly as expected!
     assert_eq!(policy, example.expected_dice_policy);
@@ -257,7 +262,7 @@ fn policy_enc_dec_test() {
 #[rdroidtest]
 fn policy_matches_original_dice_chain() {
     let example = TestArtifacts::get_example();
-    policy_for_dice_chain(&example.input_dice, &example.constraint_spec)
+    policy_for_dice_chain(&example.input_dice, example.constraint_spec)
         .unwrap()
         .matches_dice_chain(&example.input_dice)
         .unwrap();
@@ -266,7 +271,7 @@ fn policy_matches_original_dice_chain() {
 #[rdroidtest]
 fn policy_matches_updated_dice_chain() {
     let example = TestArtifacts::get_example();
-    policy_for_dice_chain(&example.input_dice, &example.constraint_spec)
+    policy_for_dice_chain(&example.input_dice, example.constraint_spec)
         .unwrap()
         .matches_dice_chain(&example.updated_input_dice)
         .unwrap();
@@ -276,7 +281,7 @@ fn policy_matches_updated_dice_chain() {
 fn policy_mismatch_downgraded_dice_chain() {
     let example = TestArtifacts::get_example();
     assert!(
-        policy_for_dice_chain(&example.updated_input_dice, &example.constraint_spec)
+        policy_for_dice_chain(&example.updated_input_dice, example.constraint_spec)
             .unwrap()
             .matches_dice_chain(&example.input_dice)
             .is_err(),
@@ -293,10 +298,10 @@ fn policy_constructional_required_constraint() {
         ConstraintType::ExactMatch,
         vec![9, 8, 7],
         MissingAction::Fail,
-        CertIndex::All,
+        TargetEntry::All,
     ));
     assert!(
-        policy_for_dice_chain(&example.input_dice, &example.constraint_spec).is_err(),
+        policy_for_dice_chain(&example.input_dice, example.constraint_spec).is_err(),
         "DicePolicy creation should've failed on Required constraint"
     );
 }
@@ -309,10 +314,10 @@ fn policy_constructional_optional_constraint() {
         ConstraintType::ExactMatch,
         vec![9, 8, 7],
         MissingAction::Ignore,
-        CertIndex::All,
+        TargetEntry::All,
     ));
     // However for optional constraint, policy construction should succeed!
-    _ = policy_for_dice_chain(&example.input_dice, &example.constraint_spec).unwrap()
+    _ = policy_for_dice_chain(&example.input_dice, example.constraint_spec).unwrap()
 }
 
 #[rdroidtest]
@@ -320,41 +325,40 @@ fn policy_dice_size_is_same() {
     // This is the number of certs in compos bcc (including the first ROT)
     // To analyze a bcc use hwtrust tool from /tools/security/remote_provisioning/hwtrust
     // `hwtrust --verbose dice-chain [path]/composbcc`
-    const COMPOS_CHAIN_SIZE_EXPLICIT_KEY: usize = 6;
     let input_dice = include_bytes!("./testdata/compos_chain_explicit");
-    let constraint_spec = [
+    let constraint_spec = vec![
         ConstraintSpec::new(
             ConstraintType::ExactMatch,
             vec![AUTHORITY_HASH],
             MissingAction::Fail,
-            CertIndex::All,
+            TargetEntry::All,
         ),
         ConstraintSpec::new(
             ConstraintType::ExactMatch,
             vec![KEY_MODE],
             MissingAction::Fail,
-            CertIndex::All,
+            TargetEntry::All,
         ),
         ConstraintSpec::new(
             ConstraintType::ExactMatch,
             vec![CONFIG_DESC, COMPONENT_NAME],
             MissingAction::Fail,
-            CertIndex::All,
+            TargetEntry::All,
         ),
         ConstraintSpec::new(
             ConstraintType::GreaterOrEqual,
             vec![CONFIG_DESC, COMPONENT_VERSION],
             MissingAction::Ignore,
-            CertIndex::All,
+            TargetEntry::All,
         ),
         ConstraintSpec::new(
             ConstraintType::GreaterOrEqual,
             vec![CONFIG_DESC, SECURITY_VERSION],
             MissingAction::Ignore,
-            CertIndex::All,
+            TargetEntry::All,
         ),
     ];
-    let policy = policy_for_dice_chain(input_dice, &constraint_spec).unwrap();
+    let policy = policy_for_dice_chain(input_dice, constraint_spec).unwrap();
     assert_eq!(policy.node_constraints_list.len(), COMPOS_CHAIN_SIZE_EXPLICIT_KEY);
     // Check that original dice chain matches the policy.
     policy.matches_dice_chain(input_dice).unwrap();
