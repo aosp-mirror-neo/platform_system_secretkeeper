@@ -38,7 +38,7 @@ pub const ID_SIZE: usize = 64;
 pub const SECRET_SIZE: usize = 32;
 
 /// Identifier of Secret. See `id` in SecretManagement.cddl
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Id(pub [u8; ID_SIZE]);
 
 impl AsCborValue for Id {
@@ -58,6 +58,13 @@ impl AsCborValue for Id {
 }
 
 impl CborSerializable for Id {}
+
+impl core::fmt::Debug for Id {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Output only first 8 bytes of Id, which is sufficient for debugging
+        write!(f, "{:02x?}", &self.0[..8])
+    }
+}
 
 /// Secret - corresponds to `secret` in SecretManagement.cddl
 #[derive(Clone, Eq, PartialEq, ZeroizeOnDrop)]
