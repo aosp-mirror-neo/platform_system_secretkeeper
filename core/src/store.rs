@@ -125,23 +125,25 @@ impl PolicyGatedStorage {
         dice_chain: &[u8],
         updated_sealing_policy: Option<Vec<u8>>,
     ) -> Result<Secret, SecretkeeperError> {
-        let id = id.0.as_slice();
-        match self.secure_store.get(id).map_err(unexpected_err)? {
+        let id_bytes = id.0.as_slice();
+        match self.secure_store.get(id_bytes).map_err(unexpected_err)? {
             Some(entry_serialized) => {
                 let entry = Entry::from_slice(&entry_serialized).map_err(serial_err)?;
                 chain_matches_policy(dice_chain, &entry.sealing_policy).map_err(policy_err)?;
 
                 // Replace the entry with updated_sealing_policy.
                 if let Some(updated_sealing_policy) = updated_sealing_policy {
-                    chain_matches_policy(dice_chain, &updated_sealing_policy)
-                        .map_err(policy_err)?;
-                    let new_entry = Entry {
-                        secret: entry.secret.clone(),
-                        sealing_policy: updated_sealing_policy,
+                    if entry.sealing_policy != updated_sealing_policy {
+                        chain_matches_policy(dice_chain, &updated_sealing_policy)
+                            .map_err(policy_err)?;
+                        let new_entry = Entry {
+                            secret: entry.secret.clone(),
+                            sealing_policy: updated_sealing_policy,
+                        }
+                        .to_vec()
+                        .map_err(serial_err)?;
+                        self.secure_store.store(id_bytes, &new_entry).map_err(unexpected_err)?;
                     }
-                    .to_vec()
-                    .map_err(serial_err)?;
-                    self.secure_store.store(id, &new_entry).map_err(unexpected_err)?;
                 }
                 Ok(entry.secret)
             }

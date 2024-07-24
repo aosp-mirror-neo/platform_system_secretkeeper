@@ -53,7 +53,7 @@ pub mod bootloader;
 const CURRENT_VERSION: u64 = 1;
 
 /// Default maximum number of live session keys.
-const MAX_SESSIONS_DEFAULT: usize = 8;
+const MAX_SESSIONS_DEFAULT: usize = 4;
 
 /// Macro to build an [`ApiError`] instance.
 /// E.g. use: `aidl_err!(InternalError, "some {} format", arg)`.
@@ -439,7 +439,7 @@ impl Device for SecretkeeperTa {
         _shared_keys: &[Vec<u8>],
         _sha256: &dyn Sha256,
     ) -> Result<(), Error> {
-        // TODO: implement
+        // Secretkeeper does not need to validate shared session after successful Key Exchange.
         Ok(())
     }
 }

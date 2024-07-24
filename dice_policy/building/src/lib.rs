@@ -38,6 +38,11 @@ pub const SUPPORTED_DICE_POLICY_VERSION: u64 = 1;
 /// Wildcard key to specify all indexes of an array in a nested container. The library only
 /// supports 1 Wildcard key per `ConstraintSpec`.
 pub const WILDCARD_FULL_ARRAY: i64 = -1;
+
+const CONFIG_DESC: i64 = -4670548;
+const COMPONENT_NAME: i64 = -70002;
+const PATH_TO_COMPONENT_NAME: [i64; 2] = [CONFIG_DESC, COMPONENT_NAME];
+
 /// Constraint Types supported in Dice policy.
 #[repr(u16)]
 #[non_exhaustive]
@@ -65,7 +70,7 @@ pub struct ConstraintSpec {
     // matching.
     if_path_missing: MissingAction,
     // Which DiceChainEntry to apply the constraint on.
-    target_entry: CertIndex,
+    target_entry: TargetEntry,
 }
 
 impl ConstraintSpec {
@@ -75,7 +80,7 @@ impl ConstraintSpec {
         constraint_type: ConstraintType,
         path: Vec<i64>,
         if_path_missing: MissingAction,
-        target_entry: CertIndex,
+        target_entry: TargetEntry,
     ) -> Self {
         Self { constraint_type, path, if_path_missing, target_entry }
     }
@@ -99,21 +104,40 @@ impl ConstraintSpec {
             Either::Left(once(Ok(Cow::Borrowed(self))))
         }
     }
+
+    fn use_once(&self) -> bool {
+        matches!(self.target_entry, TargetEntry::ByName(_))
+    }
 }
 
-/// Indicates index of a DiceChainEntry in the chain. Note this covers only DiceChainEntries in
+/// Indicates the DiceChainEntry in the chain. Note this covers only DiceChainEntries in
 /// ExplicitKeyDiceCertChain, ie, this does not include the first 2 dice nodes.
-#[derive(Clone, PartialEq, Eq)]
-pub enum CertIndex {
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum TargetEntry {
     /// All Entries
     All,
-    /// Specify the index relative to the end of the chain. FromEnd(0) => last DiceChainEntry
-    FromEnd(usize),
+    /// Specify a particular DiceChain entry by component name. Lookup is done from the end of the
+    /// chain, i.e., the last entry with given component_name will be targeted.
+    ByName(String),
 }
 
-fn is_target_node(node_pos_from_end: usize, spec: &ConstraintSpec) -> bool {
-    spec.target_entry == CertIndex::All
-        || spec.target_entry == CertIndex::FromEnd(node_pos_from_end)
+// Extract the component name from the DiceChainEntry, if present.
+fn try_extract_component_name(node_payload: &Value) -> Option<String> {
+    let component_name = lookup_in_nested_container(node_payload, &PATH_TO_COMPONENT_NAME)
+        .unwrap_or_else(|e| {
+            log::warn!("Lookup for component_name in the node failed {e:?}- ignoring!");
+            None
+        })?;
+    component_name.into_text().ok()
+}
+
+fn is_target_node(node_payload: &Value, spec: &ConstraintSpec) -> bool {
+    match &spec.target_entry {
+        TargetEntry::All => true,
+        TargetEntry::ByName(name) => {
+            Some(name) == try_extract_component_name(node_payload).as_ref()
+        }
+    }
 }
 
 // Position of the first index marked `WILDCARD_FULL_ARRAY` in path.
@@ -196,37 +220,38 @@ pub enum MissingAction {
 ///    ];
 pub fn policy_for_dice_chain(
     explicit_key_dice_chain: &[u8],
-    constraint_spec: &[ConstraintSpec],
+    mut constraint_spec: Vec<ConstraintSpec>,
 ) -> Result<DicePolicy, Error> {
     let dice_chain = deserialize_cbor_array(explicit_key_dice_chain)?;
     check_is_explicit_key_dice_chain(&dice_chain)?;
     let mut constraints_list: Vec<NodeConstraints> = Vec::with_capacity(dice_chain.len());
-    // 1st & 2nd dice node of Explicit-key DiceCertChain format are
-    // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload. The rest are
-    // DiceChainEntry which is a CoseSign1.
     let chain_entries_len = dice_chain.len() - 2;
-    let mut it = dice_chain.into_iter();
-    constraints_list.push(NodeConstraints(Box::new([Constraint::new(
-        ConstraintType::ExactMatch as u16,
-        Vec::new(),
-        it.next().unwrap(),
-    )?])));
-
-    constraints_list.push(NodeConstraints(Box::new([Constraint::new(
-        ConstraintType::ExactMatch as u16,
-        Vec::new(),
-        it.next().unwrap(),
-    )?])));
-    for (i, chain_entry) in it.enumerate() {
-        let entry = payload_value_from_cose_sign(chain_entry)
-            .map_err(|e| format!("Unable to get Cose payload at {i}: {e:?}"))?;
-        let node_pos_from_end = chain_entries_len - i - 1;
-        constraints_list.push(
-            constraints_on_dice_node(entry, constraint_spec, node_pos_from_end)
-                .map_err(|e| format!("Unable to get constraints for payload at {i}: {e:?}"))?,
-        );
+    // Iterate on the reversed DICE chain! This is important because some constraint_spec
+    // (with `TargetEntry::ByType`) are applied on the last DiceChainEntry matching the spec.
+    let mut it = dice_chain.into_iter().rev();
+    for i in 0..chain_entries_len {
+        let entry = payload_value_from_cose_sign(it.next().unwrap())
+            .map_err(|e| format!("Unable to get Cose payload at pos {i} from end: {e:?}"))?;
+        constraints_list.push(constraints_on_dice_node(entry, &mut constraint_spec).map_err(
+            |e| format!("Unable to get constraints for payload at {i} from end: {e:?}"),
+        )?);
     }
 
+    // 1st & 2nd dice node of Explicit-key DiceCertChain format are
+    // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload.
+    constraints_list.push(NodeConstraints(Box::new([Constraint::new(
+        ConstraintType::ExactMatch as u16,
+        Vec::new(),
+        it.next().unwrap(),
+    )?])));
+
+    constraints_list.push(NodeConstraints(Box::new([Constraint::new(
+        ConstraintType::ExactMatch as u16,
+        Vec::new(),
+        it.next().unwrap(),
+    )?])));
+
+    constraints_list.reverse();
     Ok(DicePolicy {
         version: DICE_POLICY_VERSION,
         node_constraints_list: constraints_list.into_boxed_slice(),
@@ -236,25 +261,33 @@ pub fn policy_for_dice_chain(
 // Take the ['node_payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
 // corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
 // `MissingAction::Ignore`, the corresponding constraint will be missing from the NodeConstraints.
-// Not all constraint_spec applies to all DiceChainEntries. `pos_from_end` is the index of the
-// DiceChainEntry relative to end & that is used to skip constraint_spec if not applicable.
+// Not all constraint_spec applies to all DiceChainEntries, see `TargetEntry::ByName`.
 fn constraints_on_dice_node(
     node_payload: Value,
-    constraint_spec: &[ConstraintSpec],
-    pos_from_end: usize,
+    constraint_spec: &mut Vec<ConstraintSpec>,
 ) -> Result<NodeConstraints, Error> {
     let mut node_constraints: Vec<Constraint> = Vec::new();
-    // Some constraint spec may have wildcard entries, expand those!
-    let constraint_spec = constraint_spec
-        .iter()
-        .filter(|c| is_target_node(pos_from_end, c))
-        .flat_map(|c| c.expand(&node_payload))
-        .collect::<Result<Vec<_>, _>>()?;
-    for constraint_item in constraint_spec {
-        if let Some(constraint) = constraint_on_dice_node(&node_payload, &constraint_item)? {
-            node_constraints.push(constraint);
+    let constraint_spec_with_retention_marker =
+        constraint_spec.iter().map(|c| (c.clone(), is_target_node(&node_payload, c)));
+
+    for (constraint_item, is_target) in constraint_spec_with_retention_marker.clone() {
+        if !is_target {
+            continue;
+        }
+        // Some constraint spec may have wildcard entries, expand those!
+        for constraint_item_expanded in constraint_item.expand(&node_payload) {
+            let constraint_item_expanded = constraint_item_expanded?;
+            if let Some(constraint) =
+                constraint_on_dice_node(&node_payload, &constraint_item_expanded)?
+            {
+                node_constraints.push(constraint);
+            }
         }
     }
+
+    *constraint_spec = constraint_spec_with_retention_marker
+        .filter_map(|(c, is_target)| if is_target && c.use_once() { None } else { Some(c) })
+        .collect();
     Ok(NodeConstraints(node_constraints.into_boxed_slice()))
 }
 
@@ -265,19 +298,34 @@ fn constraint_on_dice_node(
     if constraint_spec.path.is_empty() {
         return Err("Expected non-empty key spec".to_string());
     }
-    let constraint = match lookup_in_nested_container(node_payload, &constraint_spec.path)? {
-        Some(val) => Some(Constraint::new(
+    let constraint = match lookup_in_nested_container(node_payload, &constraint_spec.path) {
+        Ok(Some(val)) => Some(Constraint::new(
             constraint_spec.constraint_type as u16,
             constraint_spec.path.to_vec(),
             val,
         )?),
-        None => {
+        Ok(None) => {
             if constraint_spec.if_path_missing == MissingAction::Ignore {
                 log::warn!("Value not found for {:?}, - skipping!", constraint_spec.path);
                 None
             } else {
                 return Err(format!(
                     "Value not found for : {:?}, constraint\
+                     spec is marked to fail on missing path",
+                    constraint_spec.path
+                ));
+            }
+        }
+        Err(e) => {
+            if constraint_spec.if_path_missing == MissingAction::Ignore {
+                log::warn!(
+                    "Error ({e:?}) getting Value for {:?}, - skipping!",
+                    constraint_spec.path
+                );
+                None
+            } else {
+                return Err(format!(
+                    "Error ({e:?}) getting Value for {:?}, constraint\
                      spec is marked to fail on missing path",
                     constraint_spec.path
                 ));
