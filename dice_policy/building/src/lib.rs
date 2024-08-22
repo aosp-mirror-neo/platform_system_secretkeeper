@@ -205,19 +205,23 @@ pub enum MissingAction {
 ///
 /// Examples of constraint_spec:
 ///  1. For exact_match on auth_hash & greater_or_equal on security_version
+///    ```
 ///    constraint_spec =[
 ///     (ConstraintType::ExactMatch, vec![AUTHORITY_HASH]),
 ///     (ConstraintType::GreaterOrEqual, vec![CONFIG_DESC, COMPONENT_NAME]),
 ///    ];
+///    ```
 ///
 /// 2. For hypothetical (and highly simplified) dice chain:
 ///
+///    ```
 ///    [1, ROT_KEY, [{1 : 'a', 2 : {200 : 5, 201 : 'b'}}]]
 ///    The following can be used
 ///    constraint_spec =[
 ///     ConstraintSpec(ConstraintType::ExactMatch, vec![1]),         // exact_matches value 'a'
 ///     ConstraintSpec(ConstraintType::GreaterOrEqual, vec![2, 200]),// matches any value >= 5
 ///    ];
+///    ```
 pub fn policy_for_dice_chain(
     explicit_key_dice_chain: &[u8],
     mut constraint_spec: Vec<ConstraintSpec>,
