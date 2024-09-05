@@ -34,10 +34,11 @@
 //! These constraints used to express policy are (for now) limited to following 2 types:
 //! 1. Exact Match: useful for enforcing rules like authority hash should be exactly equal.
 //! 2. Greater than or equal to: Useful for setting policies that seal
-//! Anti-rollback protected entities (should be accessible to versions >= present).
+//!    Anti-rollback protected entities (should be accessible to versions >= present).
 //!
 //! Dice Policy CDDL (keep in sync with DicePolicy.cddl):
 //!
+//! ```
 //! dicePolicy = [
 //! 1, ; dice policy version
 //! + nodeConstraintList ; for each entry in dice chain
@@ -56,6 +57,7 @@
 //! keySpec = [value+]
 //!
 //! value = bool / int / tstr / bstr
+//! ```
 
 use ciborium::Value;
 use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
