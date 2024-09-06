@@ -33,14 +33,14 @@ use secretkeeper_comm::data_types::{Id, Secret};
 /// access to its stored entry.
 ///
 /// 1) Storage: `PolicyGatedStorage` allows storing a Secret (and sealing_policy) which is indexed
-/// by an [`Id`]. Under the hood, it uses a Key-Value based storage, which should be provided on
-/// initialization.  The security properties (Confidentiality/Integrity/Persistence) expected from
-/// the Storage are listed in ISecretkeeper.aidl
+///    by an [`Id`]. Under the hood, it uses a Key-Value based storage, which should be provided on
+///    initialization.  The security properties (Confidentiality/Integrity/Persistence) expected from
+///    the Storage are listed in ISecretkeeper.aidl
 ///
 /// 2) Access control: Secretkeeper uses DICE policy based access control. Each secret is
-/// associated with a sealing_policy, which is a DICE policy. This is a required input while
-/// storing a secret. Further access to this secret is restricted to clients whose DICE chain
-/// adheres to the sealing_policy.
+///    associated with a sealing_policy, which is a DICE policy. This is a required input while
+///    storing a secret. Further access to this secret is restricted to clients whose DICE chain
+///    adheres to the sealing_policy.
 pub struct PolicyGatedStorage {
     secure_store: Box<dyn KeyValueStore>,
 }
