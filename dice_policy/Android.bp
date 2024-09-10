@@ -13,6 +13,7 @@ rust_defaults {
         "libcoset",
     ],
     vendor_available: true,
+    host_supported: true,
 }
 
 rust_library {
