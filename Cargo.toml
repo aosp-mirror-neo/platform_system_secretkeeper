@@ -1,0 +1,15 @@
+[workspace]
+members = [
+  "comm",
+  "core",
+  "dice_policy",
+]
+resolver = "2"
+
+[patch.crates-io]
+authgraph_core = { path = "../authgraph/core" }
+authgraph_derive = { path = "../authgraph/derive" }
+authgraph_wire = { path = "../authgraph/wire" }
+dice_policy = { path = "dice_policy" }
+secretkeeper_comm = { path = "comm" }
+secretkeeper_core = { path = "core" }
