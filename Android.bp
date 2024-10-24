@@ -29,3 +29,9 @@ license {
 }
 
 subdirs = ["*"]
+
+dirgroup {
+    name: "trusty_dirgroup_system_secretkeeper",
+    dirs: ["."],
+    visibility: ["//trusty/vendor/google/aosp/scripts"],
+}
