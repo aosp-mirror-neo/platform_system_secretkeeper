@@ -258,9 +258,9 @@ value of the `secretkeeper_public_key` property of the `/avf` node - exposed to
 userspace at `/proc/device-tree/avf/secretkeeper_public_key`.
 
 When a protected VM is started, AVF populates this property in the VM DT `/avf`
-node from the corresponding property in the `/avf/reference/avf` node in the
-host DT. pvmfw verifies that the value is correct using the VM reference DT that
-is included in the pvmfw [configuration data][pvmfwconfig].
+node by querying `ISecretekeeper::getSecretkeeperIdentity`. pvmfw verifies that
+the value is correct using the VM reference DT that is included in the pvmfw
+[configuration data][pvmfwconfig].
 
 The [Android bootloader][androidbootloader] should request the public key from
 the Secretkeeper implementation at boot time and populate it in both the host

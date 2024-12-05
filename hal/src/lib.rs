@@ -22,6 +22,8 @@ use android_hardware_security_secretkeeper::aidl::android::hardware::security::s
     },
     SecretId::SecretId as AidlSecretId,
 };
+#[cfg(feature = "hal_v2")]
+use android_hardware_security_secretkeeper::aidl::android::hardware::security::secretkeeper::PublicKey::PublicKey;
 use android_hardware_security_authgraph::aidl::android::hardware::security::authgraph::{
     IAuthGraphKeyExchange::IAuthGraphKeyExchange,
 };
@@ -105,6 +107,21 @@ impl<T: SerializedChannel> ISecretkeeper for SecretkeeperService<T> {
         let rsp = PerformOpResponse::from_slice(&rsp_data).map_err(failed_cbor)?;
         match rsp {
             PerformOpResponse::Success(PerformOpSuccessRsp::Empty) => Ok(()),
+            PerformOpResponse::Success(_) => Err(unexpected_response_type()),
+            PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
+        }
+    }
+
+    #[cfg(feature = "hal_v2")]
+    fn getSecretkeeperIdentity(&self) -> binder::Result<PublicKey> {
+        let wrapper = PerformOpReq::GetSecretkeeperIdentity;
+        let wrapper_data = wrapper.to_vec().map_err(failed_cbor)?;
+        let rsp_data = self.channel.execute(&wrapper_data)?;
+        let rsp = PerformOpResponse::from_slice(&rsp_data).map_err(failed_cbor)?;
+        match rsp {
+            PerformOpResponse::Success(PerformOpSuccessRsp::ProtectedResponse(data)) => {
+                Ok(PublicKey { keyMaterial: data })
+            }
             PerformOpResponse::Success(_) => Err(unexpected_response_type()),
             PerformOpResponse::Failure(err) => Err(service_specific_error(err)),
         }
