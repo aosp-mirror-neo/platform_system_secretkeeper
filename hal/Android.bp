@@ -16,14 +16,13 @@ package {
     default_applicable_licenses: ["system_secretkeeper_license"],
 }
 
-rust_library {
-    name: "libsecretkeeper_hal",
+rust_defaults {
+    name: "libsecretkeeper_hal_defaults",
     crate_name: "secretkeeper_hal",
     srcs: ["src/lib.rs"],
     vendor_available: true,
     defaults: [
         "authgraph_use_latest_hal_aidl_rust",
-        "secretkeeper_use_latest_hal_aidl_rust",
     ],
     rustlibs: [
         "libauthgraph_hal",
@@ -31,5 +30,26 @@ rust_library {
         "libcoset",
         "liblog_rust",
         "libsecretkeeper_comm_nostd",
+    ],
+}
+
+rust_library {
+    name: "libsecretkeeper_hal",
+    defaults: [
+        "libsecretkeeper_hal_defaults",
+        "secretkeeper_use_latest_hal_aidl_rust",
+    ],
+    features: [
+        "hal_v2",
+    ],
+}
+
+rust_library {
+    name: "libsecretkeeper_hal_v1",
+    defaults: [
+        "libsecretkeeper_hal_defaults",
+    ],
+    rustlibs: [
+        "android.hardware.security.secretkeeper-V1-rust",
     ],
 }
