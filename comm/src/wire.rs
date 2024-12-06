@@ -36,6 +36,8 @@ pub enum PerformOpReq {
 
     /// A (plaintext) request to delete all data.
     DeleteAll,
+
+    GetSecretkeeperIdentity,
 }
 
 impl PerformOpReq {
@@ -44,6 +46,7 @@ impl PerformOpReq {
             Self::SecretManagement(_) => OpCode::SecretManagement,
             Self::DeleteIds(_) => OpCode::DeleteIds,
             Self::DeleteAll => OpCode::DeleteAll,
+            Self::GetSecretkeeperIdentity => OpCode::GetSecretkeeperIdentity,
         }
     }
 }
@@ -63,6 +66,9 @@ impl AsCborValue for PerformOpReq {
                 ]
             }
             Self::DeleteAll => vec![OpCode::DeleteAll.to_cbor_value()?, Value::Null],
+            Self::GetSecretkeeperIdentity => {
+                vec![OpCode::GetSecretkeeperIdentity.to_cbor_value()?, Value::Null]
+            }
         }))
     }
 
@@ -99,6 +105,12 @@ impl AsCborValue for PerformOpReq {
                 }
                 Self::DeleteAll
             }
+            OpCode::GetSecretkeeperIdentity => {
+                if !val.is_null() {
+                    return cbor_type_error(&val, "nil");
+                }
+                Self::GetSecretkeeperIdentity
+            }
         })
     }
 }
@@ -111,6 +123,7 @@ pub enum OpCode {
     SecretManagement = 0x10,
     DeleteIds = 0x11,
     DeleteAll = 0x12,
+    GetSecretkeeperIdentity = 0x13,
 }
 
 impl AsCborValue for OpCode {
