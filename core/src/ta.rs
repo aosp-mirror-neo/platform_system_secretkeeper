@@ -16,6 +16,7 @@
 
 //! Implementation of a Secretkeeper trusted application (TA).
 
+use crate::alloc::string::ToString;
 use crate::cipher;
 use crate::store::{KeyValueStore, PolicyGatedStorage};
 use alloc::boxed::Box;
@@ -210,6 +211,18 @@ impl SecretkeeperTa {
                 self.delete_ids(ids).map(|_| PerformOpSuccessRsp::Empty)
             }
             PerformOpReq::DeleteAll => self.delete_all().map(|_| PerformOpSuccessRsp::Empty),
+            PerformOpReq::GetSecretkeeperIdentity => {
+                let Identity { cert_chain: CertChain { root_key, .. }, .. } = &self.identity;
+                root_key
+                    .clone()
+                    .get_key()
+                    .to_vec()
+                    .map_err(|e| ApiError {
+                        err_code: AidlErrorCode::InternalError,
+                        msg: e.to_string(),
+                    })
+                    .map(PerformOpSuccessRsp::ProtectedResponse)
+            }
         };
         match result {
             Ok(rsp) => PerformOpResponse::Success(rsp),
