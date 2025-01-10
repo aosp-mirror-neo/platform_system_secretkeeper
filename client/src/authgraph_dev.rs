@@ -39,6 +39,7 @@ use diced_open_dice::derive_cdi_leaf_priv;
 
 /// Implementation of `authgraph_core::traits::Device` required for configuring the local
 /// `AuthGraphParticipant` for client.
+#[derive(Clone)]
 pub struct AgDevice {
     per_boot_key: AesKey,
     identity: (EcSignKey, Identity),
