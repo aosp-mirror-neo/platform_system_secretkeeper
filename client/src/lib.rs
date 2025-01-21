@@ -40,7 +40,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
-/// A Secretkeeper session that can be used by client, this encapsulates the Authgraph Key exchange
+/// A Secretkeeper session that can be used by client, this encapsulates the AuthGraph Key exchange
 /// session as well as the encryption/decryption of request/response to/from Secretkeeper.
 pub struct SkSession {
     sk: binder::Strong<dyn ISecretkeeper>,
@@ -52,10 +52,12 @@ pub struct SkSession {
     seq_num_outgoing: SeqNum,
     // Sequence number for decrypting the next incoming message.
     seq_num_incoming: SeqNum,
+    // The local AuthGraph Device impl - encapsulates the local identity etc.
+    authgraph_participant: AgDevice,
 }
 
 impl SkSession {
-    /// Create a new Secretkeeper session. This triggers an AuthgraphKeyExchange protocol with a
+    /// Create a new Secretkeeper session. This triggers an AuthGraphKeyExchange protocol with a
     /// local `source` and remote `sink`.
     ///
     /// # Arguments
@@ -70,9 +72,11 @@ impl SkSession {
         dice: &OwnedDiceArtifactsWithExplicitKey,
         expected_sk_key: Option<CoseKey>,
     ) -> Result<Self, Error> {
-        let ag_dev = Rc::new(RefCell::new(AgDevice::new(dice, expected_sk_key)?));
-        let ([encryption_key, decryption_key], session_id) =
-            authgraph_key_exchange(sk.clone(), ag_dev.clone())?;
+        let authgraph_participant = AgDevice::new(dice, expected_sk_key)?;
+        let ([encryption_key, decryption_key], session_id) = authgraph_key_exchange(
+            sk.clone(),
+            Rc::new(RefCell::new(authgraph_participant.clone())),
+        )?;
         Ok(Self {
             sk,
             encryption_key,
@@ -80,7 +84,23 @@ impl SkSession {
             session_id,
             seq_num_outgoing: SeqNum::new(),
             seq_num_incoming: SeqNum::new(),
+            authgraph_participant,
         })
+    }
+
+    /// Refresh the existing Secretkeeper session. This reuses the client
+    /// identity & per_boot_key, does AuthGraphKeyExchange resetting the keys!
+    pub fn refresh(&mut self) -> Result<(), Error> {
+        let ([encryption_key, decryption_key], session_id) = authgraph_key_exchange(
+            self.sk.clone(),
+            Rc::new(RefCell::new(self.authgraph_participant.clone())),
+        )?;
+        self.encryption_key = encryption_key;
+        self.decryption_key = decryption_key;
+        self.session_id = session_id;
+        self.seq_num_outgoing = SeqNum::new();
+        self.seq_num_incoming = SeqNum::new();
+        Ok(())
     }
 
     /// Wrapper around `ISecretkeeper::processSecretManagementRequest`. This additionally handles
