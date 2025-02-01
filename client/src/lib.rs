@@ -18,10 +18,8 @@
 //! and the messages is encrypted/decrypted using the shared keys.
 
 mod authgraph_dev;
-pub mod dice;
 
 use crate::authgraph_dev::AgDevice;
-use crate::dice::OwnedDiceArtifactsWithExplicitKey;
 
 use authgraph_boringssl as boring;
 use authgraph_core::keyexchange as ke;
@@ -33,6 +31,7 @@ use android_hardware_security_authgraph::aidl::android::hardware::security::auth
     SessionIdSignature::SessionIdSignature, Identity::Identity,
 };
 use coset::{CoseKey, CborSerializable, CoseEncrypt0};
+use explicitkeydice::OwnedDiceArtifactsWithExplicitKey;
 use secretkeeper_core::cipher;
 use secretkeeper_comm::data_types::SeqNum;
 use secretkeeper_comm::wire::ApiError;
@@ -298,6 +297,3 @@ fn vec_to_identity(data: &[u8]) -> Identity {
 fn vec_to_signature(data: &[u8]) -> SessionIdSignature {
     SessionIdSignature { signature: data.to_vec() }
 }
-
-#[cfg(test)]
-rdroidtest::test_main!();
