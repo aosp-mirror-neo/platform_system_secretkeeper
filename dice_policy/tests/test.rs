@@ -402,4 +402,15 @@ fn lookup_in_nested_container_test() {
     assert_eq!(lookup_in_nested_container(&nested_container, &path_missing2).unwrap(), None);
 }
 
+#[rdroidtest]
+fn empty_node_constraints_deserialize_succeed() {
+    let empty_node_constraints = NodeConstraints(vec![].into_boxed_slice());
+    let serialized_cbor = empty_node_constraints.to_cbor_value().unwrap();
+
+    let res = NodeConstraints::from_cbor_value(serialized_cbor);
+
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap().0.len(), 0);
+}
+
 rdroidtest::test_main!();
