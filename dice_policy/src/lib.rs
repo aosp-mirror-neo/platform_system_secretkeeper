@@ -144,9 +144,6 @@ impl AsCborValue for NodeConstraints {
             .into_iter()
             .map(Constraint::from_cbor_value)
             .collect::<Result<_, _>>()?;
-        if res.is_empty() {
-            return Err(UnexpectedItem("Empty array", "Non empty array"));
-        }
         Ok(Self(res.into_boxed_slice()))
     }
 
