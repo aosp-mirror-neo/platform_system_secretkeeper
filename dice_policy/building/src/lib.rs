@@ -236,7 +236,7 @@ pub fn policy_for_dice_chain(
     for i in 0..chain_entries_len {
         let entry = payload_value_from_cose_sign(it.next().unwrap())
             .map_err(|e| format!("Unable to get Cose payload at pos {i} from end: {e:?}"))?;
-        constraints_list.push(constraints_on_dice_node(entry, &mut constraint_spec).map_err(
+        constraints_list.push(constraints_on_dice_node(&entry, &mut constraint_spec).map_err(
             |e| format!("Unable to get constraints for payload at {i} from end: {e:?}"),
         )?);
     }
@@ -262,29 +262,31 @@ pub fn policy_for_dice_chain(
     })
 }
 
-// Take the ['node_payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
-// corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
-// `MissingAction::Ignore`, the corresponding constraint will be missing from the NodeConstraints.
-// Not all constraint_spec applies to all DiceChainEntries, see `TargetEntry::ByName`.
-fn constraints_on_dice_node(
-    node_payload: Value,
+/// Take the ['node_payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
+/// corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
+/// `MissingAction::Ignore`, the corresponding constraint will be missing from the NodeConstraints.
+/// Not all constraint_spec applies to all DiceChainEntries, see `TargetEntry::ByName`.
+pub fn constraints_on_dice_node(
+    node_payload: &Value,
     constraint_spec: &mut Vec<ConstraintSpec>,
 ) -> Result<NodeConstraints, Error> {
     let mut node_constraints: Vec<Constraint> = Vec::new();
     let constraint_spec_with_retention_marker =
-        constraint_spec.iter().map(|c| (c.clone(), is_target_node(&node_payload, c)));
+        constraint_spec.iter().map(|c| (c.clone(), is_target_node(node_payload, c)));
 
     for (constraint_item, is_target) in constraint_spec_with_retention_marker.clone() {
         if !is_target {
             continue;
         }
         // Some constraint spec may have wildcard entries, expand those!
-        for constraint_item_expanded in constraint_item.expand(&node_payload) {
+        for constraint_item_expanded in constraint_item.expand(node_payload) {
             let constraint_item_expanded = constraint_item_expanded?;
             if let Some(constraint) =
-                constraint_on_dice_node(&node_payload, &constraint_item_expanded)?
+                constraint_on_dice_node(node_payload, &constraint_item_expanded)?
             {
-                node_constraints.push(constraint);
+                if !node_constraints.contains(&constraint) {
+                    node_constraints.push(constraint);
+                }
             }
         }
     }
