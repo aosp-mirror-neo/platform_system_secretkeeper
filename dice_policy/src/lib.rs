@@ -144,9 +144,6 @@ impl AsCborValue for NodeConstraints {
             .into_iter()
             .map(Constraint::from_cbor_value)
             .collect::<Result<_, _>>()?;
-        if res.is_empty() {
-            return Err(UnexpectedItem("Empty array", "Non empty array"));
-        }
         Ok(Self(res.into_boxed_slice()))
     }
 
@@ -232,7 +229,9 @@ impl DicePolicy {
     }
 }
 
-fn check_constraints_on_node(
+/// Matches a single DICE cert chain node against the corresponding node constraints of the DICE
+/// policy.
+pub fn check_constraints_on_node(
     node_constraints: &NodeConstraints,
     dice_node: &Value,
 ) -> Result<(), Error> {
