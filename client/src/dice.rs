@@ -16,13 +16,40 @@
 
 //! Support for explicit key chain format & conversion from legacy DiceArtifacts.
 
-use crate::Error;
 use ciborium::Value;
 use coset::{AsCborValue, CborOrdering, CborSerializable, CoseKey};
 use diced_open_dice::{DiceArtifacts, OwnedDiceArtifacts, CDI_SIZE};
 use std::fmt;
 
 const EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION: u64 = 1;
+
+/// Error type thrown in OwnedDiceArtifactsWithExplicitKey struct
+#[derive(Debug)]
+pub enum Error {
+    /// Errors originating in the coset library.
+    CoseError(coset::CoseError),
+    /// Unexpected item encountered (got, want).
+    UnexpectedItem(&'static str, &'static str),
+}
+
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::CoseError(e) => write!(f, "Errors originating in the coset library {e:?}"),
+            Self::UnexpectedItem(got, want) => {
+                write!(f, "Unexpected item - Got:{got}, Expected:{want}")
+            }
+        }
+    }
+}
+
+impl From<coset::CoseError> for Error {
+    fn from(e: coset::CoseError) -> Self {
+        Self::CoseError(e)
+    }
+}
 
 /// An OwnedDiceArtifactsWithExplicitKey is an OwnedDiceArtifacts that also exposes its
 /// DICE chain (BCC) in explicit key format.
@@ -75,10 +102,10 @@ impl DiceArtifacts for OwnedDiceArtifactsWithExplicitKey {
     }
 }
 
-// Convert a DICE chain to explicit key format. Note that this method checks if the input is
-// already in the Explicit-key format & returns it if so. The check is lightweight though.
-// A twisted incorrect dice chain input may produce incorrect output.
-fn to_explicit_chain(dice_chain_bytes: &[u8]) -> Result<Vec<u8>, Error> {
+/// Convert a DICE chain to explicit key format. Note that this method checks if the input is
+/// already in the Explicit-key format & returns it if so. The check is lightweight though.
+/// A twisted incorrect dice chain input may produce incorrect output.
+pub fn to_explicit_chain(dice_chain_bytes: &[u8]) -> Result<Vec<u8>, Error> {
     let dice_chain = deserialize_cbor_array(dice_chain_bytes)?;
     // Check if the dice_chain is already in explicit key format
     if matches!(&&dice_chain[..], [Value::Integer(_version), Value::Bytes(_public_key), ..]) {
@@ -105,6 +132,9 @@ fn deserialize_cbor_array(cbor_array: &[u8]) -> Result<Vec<Value>, Error> {
     let value = Value::from_slice(cbor_array)?;
     value.into_array().map_err(|_| Error::UnexpectedItem("-", "Array"))
 }
+
+#[cfg(test)]
+rdroidtest::test_main!();
 
 #[cfg(test)]
 mod tests {
