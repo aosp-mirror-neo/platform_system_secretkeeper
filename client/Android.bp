@@ -32,10 +32,10 @@ rust_defaults {
         "libauthgraph_boringssl",
         "libauthgraph_wire",
         "libbinder_rs",
-        "libciborium",
         "libcoset",
-        "libhex",
         "libdiced_open_dice",
+        "libexplicitkeydice",
+        "libhex",
         // TODO(b/315464358): Use the std version
         "libsecretkeeper_comm_nostd",
         // TODO(b/291228655): This is required for 'cipher', refactor to cut this dependency.
@@ -49,14 +49,30 @@ rust_library {
     srcs: ["src/lib.rs"],
 }
 
+rust_library {
+    name: "libexplicitkeydice",
+    crate_name: "explicitkeydice",
+    edition: "2021",
+    lints: "android",
+    srcs: ["src/dice.rs"],
+    rustlibs: [
+        "libciborium",
+        "libcoset",
+        "libdiced_open_dice",
+    ],
+    vendor_available: true,
+}
+
 rust_test {
-    name: "libsecretkeeper_client.test",
+    name: "libexplicitkeydice.test",
     defaults: [
-        "libsecretkeeper_client.defaults",
         "rdroidtest.defaults",
     ],
-    srcs: ["src/lib.rs"],
+    srcs: ["src/dice.rs"],
     rustlibs: [
+        "libciborium",
+        "libcoset",
+        "libdiced_open_dice",
         "libhex",
     ],
     test_suites: ["general-tests"],
