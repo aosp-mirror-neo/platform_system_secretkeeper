@@ -20,4 +20,5 @@ rust_library {
     name: "libdice_policy",
     defaults: ["libdice_policy.defaults"],
     srcs: ["src/lib.rs"],
+    host_supported: true,
 }

@@ -17,9 +17,11 @@ rust_defaults {
     ],
     proc_macros: ["libenumn"],
     vendor_available: true,
+    host_supported: true,
 }
 
 rust_library {
     name: "libdice_policy_builder",
     defaults: ["libdice_policy_builder.defaults"],
+    host_supported: true,
 }
