@@ -229,7 +229,9 @@ impl DicePolicy {
     }
 }
 
-fn check_constraints_on_node(
+/// Matches a single DICE cert chain node against the corresponding node constraints of the DICE
+/// policy.
+pub fn check_constraints_on_node(
     node_constraints: &NodeConstraints,
     dice_node: &Value,
 ) -> Result<(), Error> {
