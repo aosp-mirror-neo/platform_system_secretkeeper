@@ -20,7 +20,6 @@
 
 extern crate alloc;
 
-use crate::dice::OwnedDiceArtifactsWithExplicitKey;
 use authgraph_boringssl::{BoringAes, BoringRng};
 use authgraph_core::ag_err;
 use authgraph_core::error::Error as AgError;
@@ -36,6 +35,7 @@ use authgraph_wire::{ErrorCode, SESSION_ID_LEN};
 use coset::CborSerializable;
 use coset::{iana, CoseKey};
 use diced_open_dice::derive_cdi_leaf_priv;
+use explicitkeydice::OwnedDiceArtifactsWithExplicitKey;
 
 /// Implementation of `authgraph_core::traits::Device` required for configuring the local
 /// `AuthGraphParticipant` for client.
