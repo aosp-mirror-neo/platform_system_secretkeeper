@@ -197,7 +197,7 @@ pub enum MissingAction {
 /// `dice_chain`: The serialized CBOR encoded Dice chain, adhering to Explicit-key
 /// DiceCertChain format. See definition at ExplicitKeyDiceCertChain.cddl
 ///
-/// `constraint_spec`: List of constraints to be applied on dice node.
+/// `ConstraintSpec`: List of constraints to be applied on dice node.
 /// Each constraint is a ConstraintSpec object.
 ///
 /// Note: Dice node is treated as a nested structure (map or array) (& so the lookup is done in
@@ -263,7 +263,7 @@ pub fn policy_for_dice_chain(
 }
 
 /// Take the ['node_payload'] of a dice node & construct the [`NodeConstraints`] on it. If the value
-/// corresponding to the a [`constraint_spec`] is not present in payload & iff it is marked
+/// corresponding to a [`ConstraintSpec`] is not present in payload & iff it is marked
 /// `MissingAction::Ignore`, the corresponding constraint will be missing from the NodeConstraints.
 /// Not all constraint_spec applies to all DiceChainEntries, see `TargetEntry::ByName`.
 pub fn constraints_on_dice_node(
