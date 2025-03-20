@@ -61,6 +61,7 @@ rust_library {
         "libdiced_open_dice",
     ],
     vendor_available: true,
+    min_sdk_version: "35",
 }
 
 rust_test {
