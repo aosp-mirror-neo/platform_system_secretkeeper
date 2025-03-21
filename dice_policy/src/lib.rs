@@ -59,11 +59,19 @@
 //! value = bool / int / tstr / bstr
 //! ```
 
-use ciborium::Value;
-use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
-use std::borrow::Cow;
-use std::iter::zip;
+#![no_std]
 
+extern crate alloc;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+use ciborium::Value;
+use core::iter::zip;
+use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
 type Error = String;
 
 /// Version of the Dice policy spec
