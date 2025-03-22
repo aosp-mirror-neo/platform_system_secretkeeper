@@ -21,4 +21,5 @@ rust_library {
     defaults: ["libdice_policy.defaults"],
     srcs: ["src/lib.rs"],
     host_supported: true,
+    min_sdk_version: "35",
 }
