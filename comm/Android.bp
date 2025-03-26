@@ -24,19 +24,35 @@ rust_defaults {
     defaults: ["avf_build_flags_rust"],
     edition: "2021",
     lints: "android",
+    proc_macros: ["libenumn"],
+    vendor_available: true,
+}
+
+rust_library_rlib {
+    name: "libsecretkeeper_comm_nostd",
+    defaults: ["libsecretkeeper_comm.defaults"],
+    srcs: ["src/lib.rs"],
+    rustlibs: [
+        "libciborium_nostd",
+        "libcoset_nostd",
+        "libzeroize_nostd",
+    ],
+    no_stdlibs: true,
+    prefer_rlib: true,
+    stdlibs: [
+        "liballoc.rust_sysroot",
+    ],
+}
+
+rust_library {
+    name: "libsecretkeeper_comm",
+    srcs: ["src/lib.rs"],
+    defaults: ["libsecretkeeper_comm.defaults"],
     rustlibs: [
         "libciborium",
         "libcoset",
         "libzeroize",
     ],
-    proc_macros: ["libenumn"],
-    vendor_available: true,
-}
-
-rust_library {
-    name: "libsecretkeeper_comm_nostd",
-    defaults: ["libsecretkeeper_comm.defaults"],
-    srcs: ["src/lib.rs"],
 }
 
 rust_test {
@@ -48,6 +64,8 @@ rust_test {
     srcs: ["tests/tests.rs"],
     test_suites: ["general-tests"],
     rustlibs: [
-        "libsecretkeeper_comm_nostd",
+        "libciborium",
+        "libcoset",
+        "libsecretkeeper_comm",
     ],
 }

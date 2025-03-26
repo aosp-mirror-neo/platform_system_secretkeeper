@@ -36,10 +36,9 @@ rust_defaults {
         "libdiced_open_dice",
         "libexplicitkeydice",
         "libhex",
-        // TODO(b/315464358): Use the std version
-        "libsecretkeeper_comm_nostd",
+        "libsecretkeeper_comm",
         // TODO(b/291228655): This is required for 'cipher', refactor to cut this dependency.
-        "libsecretkeeper_core_nostd",
+        "libsecretkeeper_core",
     ],
 }
 

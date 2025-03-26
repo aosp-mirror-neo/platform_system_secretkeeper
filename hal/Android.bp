@@ -29,7 +29,7 @@ rust_defaults {
         "libbinder_rs",
         "libcoset",
         "liblog_rust",
-        "libsecretkeeper_comm_nostd",
+        "libsecretkeeper_comm",
     ],
 }
 
