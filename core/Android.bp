@@ -25,25 +25,51 @@ rust_defaults {
         "secretkeeper_use_latest_hal_aidl_rust",
     ],
     rustlibs: [
-        // TODO(b/315464358): Use no_std version of authgraph_core/authgraph_wire/coset
-        "libauthgraph_core",
-        "libauthgraph_wire",
-        "libciborium",
-        "libcoset",
-        "libdice_policy",
         "liblog_rust",
-        "libsecretkeeper_comm_nostd",
     ],
 }
 
-rust_library {
+rust_library_rlib {
     name: "libsecretkeeper_core_nostd",
     crate_name: "secretkeeper_core",
     srcs: ["src/lib.rs"],
     defaults: [
         "libsecretkeeper_core_defaults",
     ],
+    rustlibs: [
+        "libauthgraph_core_nostd",
+        "libauthgraph_wire_nostd",
+        "libciborium_nostd",
+        "libcoset_nostd",
+        "libdice_policy_nostd",
+        "libsecretkeeper_comm_nostd",
+    ],
+    prefer_rlib: true,
     no_stdlibs: true,
+}
+
+rust_defaults {
+    name: "libsecretkeeper_core_std_defaults",
+    defaults: [
+        "libsecretkeeper_core_defaults",
+    ],
+    rustlibs: [
+        "libauthgraph_core",
+        "libauthgraph_wire",
+        "libciborium",
+        "libcoset",
+        "libdice_policy",
+        "libsecretkeeper_comm",
+    ],
+}
+
+rust_library {
+    name: "libsecretkeeper_core",
+    crate_name: "secretkeeper_core",
+    srcs: ["src/lib.rs"],
+    defaults: [
+        "libsecretkeeper_core_std_defaults",
+    ],
 }
 
 rust_test {
@@ -51,7 +77,7 @@ rust_test {
     crate_name: "secretkeeper_core_test",
     srcs: ["src/lib.rs"],
     defaults: [
-        "libsecretkeeper_core_defaults",
+        "libsecretkeeper_core_std_defaults",
     ],
     rustlibs: [
         "libhex",
