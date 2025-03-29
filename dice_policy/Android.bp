@@ -8,12 +8,20 @@ rust_defaults {
     defaults: ["avf_build_flags_rust"],
     edition: "2021",
     lints: "android",
-    rustlibs: [
-        "libciborium",
-        "libcoset",
-    ],
     vendor_available: true,
-    host_supported: true,
+}
+
+rust_library_rlib {
+    name: "libdice_policy_nostd",
+    defaults: ["libdice_policy.defaults"],
+    srcs: ["src/lib.rs"],
+    rustlibs: [
+        "libciborium_nostd",
+        "libcoset_nostd",
+    ],
+    prefer_rlib: true,
+    no_stdlibs: true,
+    min_sdk_version: "35",
 }
 
 rust_library {
@@ -22,4 +30,8 @@ rust_library {
     srcs: ["src/lib.rs"],
     host_supported: true,
     min_sdk_version: "35",
+    rustlibs: [
+        "libciborium",
+        "libcoset",
+    ],
 }
