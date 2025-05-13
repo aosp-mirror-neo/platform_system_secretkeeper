@@ -280,14 +280,16 @@ fn policy_matches_updated_dice_chain() {
 #[rdroidtest]
 fn policy_mismatch_downgraded_dice_chain() {
     let example = TestArtifacts::get_example();
+    let res = policy_for_dice_chain(&example.updated_input_dice, example.constraint_spec)
+        .unwrap()
+        .matches_dice_chain(&example.input_dice);
     assert!(
-        policy_for_dice_chain(&example.updated_input_dice, example.constraint_spec)
-            .unwrap()
-            .matches_dice_chain(&example.input_dice)
-            .is_err(),
+        res.is_err(),
         "The (downgraded) dice chain matched the policy constructed out of the 'updated'\
             dice chain!!"
     );
+    // The DICE chains vary at path [3,100], check that the error string contain the path
+    assert!(res.clone().unwrap_err().contains("[3, 100]"), "Unexpected error message {res:?}");
 }
 
 #[rdroidtest]

@@ -85,9 +85,9 @@ pub const GREATER_OR_EQUAL_CONSTRAINT: u16 = 2;
 /// Ok(()) in case of successful match, otherwise returns error in case of failure.
 pub fn chain_matches_policy(dice_chain: &[u8], policy: &[u8]) -> Result<(), Error> {
     DicePolicy::from_slice(policy)
-        .map_err(|e| format!("DicePolicy decoding failed {e:?}"))?
+        .map_err(|e| format!("DicePolicy decoding failed {e}"))?
         .matches_dice_chain(dice_chain)
-        .map_err(|e| format!("DicePolicy matching failed {e:?}"))?;
+        .map_err(|e| format!("DicePolicy matching failed {e}"))?;
     Ok(())
 }
 
@@ -227,11 +227,19 @@ impl DicePolicy {
                 // DiceChainEntry which is a CoseSign1.
                 dice_node
             } else {
-                payload_value_from_cose_sign(dice_node)
-                    .map_err(|e| format!("Unable to get Cose payload at {n}: {e:?}"))?
+                payload_value_from_cose_sign(dice_node).map_err(|e| {
+                    format!(
+                        "Unable to get Cose payload at {n}th dice node(where \
+                    0th & 1st are version & UDS_Pub related respectively): {e}"
+                    )
+                })?
             };
-            check_constraints_on_node(node_constraints, &dice_node_payload)
-                .map_err(|e| format!("Mismatch found at {n}: {e:?}"))?;
+            check_constraints_on_node(node_constraints, &dice_node_payload).map_err(|e| {
+                format!(
+                    "Mismatch found at {n}th dice node(where 0th & 1st are \
+                version & UDS_Pub related respectively): {e}"
+                )
+            })?;
         }
         Ok(())
     }
@@ -257,24 +265,30 @@ fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Resul
         EXACT_MATCH_CONSTRAINT => {
             if value_in_node != *value_in_constraint {
                 return Err(format!(
-                    "Policy mismatch. Expected {value_in_constraint:?}; found {value_in_node:?}"
+                    "Policy mismatch at constraint_path {path:?}). \
+                    Expected {value_in_constraint:?}; found {value_in_node:?}"
                 ));
             }
         }
         GREATER_OR_EQUAL_CONSTRAINT => {
-            let value_in_node = value_in_node
-                .as_integer()
-                .ok_or("Mismatch type: expected a CBOR integer".to_string())?;
-            let value_min = value_in_constraint
-                .as_integer()
-                .ok_or("Mismatch type: expected a CBOR integer".to_string())?;
+            let value_in_node = value_in_node.as_integer().ok_or(format!(
+                "Mismatch type: expected a CBOR integer at constraint_path {path:?})"
+            ))?;
+            let value_min = value_in_constraint.as_integer().ok_or(format!(
+                "Mismatch type: expected a CBOR integer at constraint_path {path:?})"
+            ))?;
             if value_in_node < value_min {
                 return Err(format!(
-                    "Policy mismatch. Expected >= {value_min:?}; found {value_in_node:?}"
+                    "Policy mismatch. Expected >= {value_min:?}; \
+                    found {value_in_node:?} at constraint_path {path:?})"
                 ));
             }
         }
-        cons_type => return Err(format!("Unexpected constraint type {cons_type:?}")),
+        cons_type => {
+            return Err(format!(
+                "Unexpected constraint type {cons_type} at constraint_path {path:?})"
+            ))
+        }
     };
     Ok(())
 }
@@ -299,7 +313,7 @@ fn get_container_from_value(container: &Value) -> Result<Container, Error> {
         // Value can be Map/Array/Encoded Map. Encoded Arrays are not yet supported (or required).
         // Note: Encoded Map is used for Configuration descriptor entry in DiceChainEntryPayload.
         Value::Bytes(b) => Value::from_slice(b)
-            .map_err(|e| format!("{e:?}"))?
+            .map_err(|e| format!("{e}"))?
             .into_map()
             .map(|m| Container::Map(Cow::Owned(m)))
             .map_err(|e| format!("Expected a CBOR map: {:?}", e)),
@@ -345,18 +359,18 @@ pub fn check_is_explicit_key_dice_chain(dice_chain: &[Value]) -> Result<(), Erro
 
 /// Extract the payload from the COSE Sign
 pub fn payload_value_from_cose_sign(cbor: Value) -> Result<Value, Error> {
-    let sign1 = CoseSign1::from_cbor_value(cbor)
-        .map_err(|e| format!("Error extracting CoseSign1: {e:?}"))?;
+    let sign1 =
+        CoseSign1::from_cbor_value(cbor).map_err(|e| format!("Error extracting CoseSign1: {e}"))?;
     match sign1.payload {
         None => Err("Missing payload".to_string()),
-        Some(payload) => Value::from_slice(&payload).map_err(|e| format!("{e:?}")),
+        Some(payload) => Value::from_slice(&payload).map_err(|e| format!("{e}")),
     }
 }
 
 /// Decode a CBOR array
 pub fn deserialize_cbor_array(cbor_array_bytes: &[u8]) -> Result<Vec<Value>, Error> {
     let cbor_array = Value::from_slice(cbor_array_bytes)
-        .map_err(|e| format!("Unable to decode top-level CBOR: {e:?}"))?;
+        .map_err(|e| format!("Unable to decode top-level CBOR: {e}"))?;
     let cbor_array =
         cbor_array.into_array().map_err(|e| format!("Expected an array found: {e:?}"))?;
     Ok(cbor_array)

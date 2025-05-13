@@ -125,7 +125,7 @@ pub enum TargetEntry {
 fn try_extract_component_name(node_payload: &Value) -> Option<String> {
     let component_name = lookup_in_nested_container(node_payload, &PATH_TO_COMPONENT_NAME)
         .unwrap_or_else(|e| {
-            log::warn!("Lookup for component_name in the node failed {e:?}- ignoring!");
+            log::warn!("Lookup for component_name in the node failed {e}- ignoring!");
             None
         })?;
     component_name.into_text().ok()
@@ -235,10 +235,12 @@ pub fn policy_for_dice_chain(
     let mut it = dice_chain.into_iter().rev();
     for i in 0..chain_entries_len {
         let entry = payload_value_from_cose_sign(it.next().unwrap())
-            .map_err(|e| format!("Unable to get Cose payload at pos {i} from end: {e:?}"))?;
-        constraints_list.push(constraints_on_dice_node(&entry, &mut constraint_spec).map_err(
-            |e| format!("Unable to get constraints for payload at {i} from end: {e:?}"),
-        )?);
+            .map_err(|e| format!("Unable to get Cose payload at pos {i} from end: {e}"))?;
+        constraints_list.push(
+            constraints_on_dice_node(&entry, &mut constraint_spec).map_err(|e| {
+                format!("Unable to get constraints for payload at {i} from end: {e}")
+            })?,
+        );
     }
 
     // 1st & 2nd dice node of Explicit-key DiceCertChain format are
@@ -324,14 +326,11 @@ fn constraint_on_dice_node(
         }
         Err(e) => {
             if constraint_spec.if_path_missing == MissingAction::Ignore {
-                log::warn!(
-                    "Error ({e:?}) getting Value for {:?}, - skipping!",
-                    constraint_spec.path
-                );
+                log::warn!("Error ({e}) getting Value for {:?}, - skipping!", constraint_spec.path);
                 None
             } else {
                 return Err(format!(
-                    "Error ({e:?}) getting Value for {:?}, constraint\
+                    "Error ({e}) getting Value for {:?}, constraint\
                      spec is marked to fail on missing path",
                     constraint_spec.path
                 ));
