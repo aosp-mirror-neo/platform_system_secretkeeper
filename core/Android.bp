@@ -24,9 +24,6 @@ rust_defaults {
         "authgraph_use_latest_hal_aidl_rust",
         "secretkeeper_use_latest_hal_aidl_rust",
     ],
-    rustlibs: [
-        "liblog_rust",
-    ],
 }
 
 rust_library_rlib {
@@ -42,6 +39,7 @@ rust_library_rlib {
         "libciborium_nostd",
         "libcoset_nostd",
         "libdice_policy_nostd",
+        "liblog_rust_nostd",
         "libsecretkeeper_comm_nostd",
     ],
     prefer_rlib: true,
@@ -59,6 +57,7 @@ rust_defaults {
         "libciborium",
         "libcoset",
         "libdice_policy",
+        "liblog_rust",
         "libsecretkeeper_comm",
     ],
 }
