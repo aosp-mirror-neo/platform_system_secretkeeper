@@ -19,7 +19,9 @@
 use ciborium::Value;
 use coset::CborSerializable;
 use rdroidtest::rdroidtest;
-use secretkeeper_comm::data_types::error::{Error, SecretkeeperError, ERROR_OK};
+use secretkeeper_comm::data_types::error::{
+    Error, SecretkeeperError, SecretkeeperErrorCode, ERROR_OK,
+};
 use secretkeeper_comm::data_types::packet::{RequestPacket, ResponsePacket, ResponseType};
 use secretkeeper_comm::data_types::request::Request;
 use secretkeeper_comm::data_types::request_response_impl::Opcode;
@@ -71,7 +73,10 @@ fn success_response_serialization_deserialization_get_secret() {
 
 #[rdroidtest]
 fn error_response_serialization_deserialization() {
-    let response = SecretkeeperError::RequestMalformed;
+    let response = SecretkeeperError {
+        code: SecretkeeperErrorCode::RequestMalformed,
+        msg: "Missing error message".to_string(),
+    };
     verify_response_structure(response, ResponseType::Error);
 }
 
@@ -178,7 +183,7 @@ fn invalid_request_creation() {
 fn invalid_response_creation_get_version() {
     // A response with non-zero error_code is an invalid success response.
     assert!(<GetVersionResponse as Response>::new(vec![
-        Value::from(SecretkeeperError::RequestMalformed as u16),
+        Value::from(SecretkeeperErrorCode::RequestMalformed as u16),
         Value::from(5)
     ])
     .is_err());
@@ -203,7 +208,7 @@ fn invalid_response_creation_get_version() {
 fn invalid_store_secret_response_creation() {
     // A response with non-zero error_code is an invalid success response.
     assert!(<StoreSecretResponse as Response>::new(vec![Value::from(
-        SecretkeeperError::RequestMalformed as u16
+        SecretkeeperErrorCode::RequestMalformed as u16
     ),])
     .is_err());
 
@@ -216,7 +221,7 @@ fn invalid_store_secret_response_creation() {
 fn invalid_get_secret_response_creation() {
     // A response with non-zero error_code is an invalid success response.
     assert!(<GetSecretResponse as Response>::new(vec![
-        Value::from(SecretkeeperError::RequestMalformed as u16),
+        Value::from(SecretkeeperErrorCode::RequestMalformed as u16),
         Value::Bytes(ex_secret_bytes()),
     ])
     .is_err());
@@ -234,6 +239,34 @@ fn invalid_error_response_creation() {
         <SecretkeeperError as Response>::new(vec![Value::from(ERROR_OK)]).unwrap_err(),
         Error::ResponseMalformed
     );
+}
+
+#[rdroidtest]
+fn valid_error_response_with_one_element() {
+    let resp = vec![Value::from(SecretkeeperErrorCode::UnexpectedServerError as u16)];
+    let resp_pack = ResponsePacket::from(resp);
+    assert!(SecretkeeperError::deserialize_from_packet(resp_pack).is_ok());
+}
+
+#[rdroidtest]
+fn valid_error_response_with_two_elements() {
+    let resp = vec![
+        Value::from(SecretkeeperErrorCode::UnexpectedServerError as u16),
+        Value::Text("Additional error message".to_string()),
+    ];
+    let resp_pack = ResponsePacket::from(resp);
+    assert!(SecretkeeperError::deserialize_from_packet(resp_pack).is_ok());
+}
+
+#[rdroidtest]
+fn invalid_error_response_with_two_elements() {
+    // The second element has to be a valid text type
+    let resp = vec![
+        Value::from(SecretkeeperErrorCode::UnexpectedServerError as u16),
+        Value::Bytes(ex_dice_policy()),
+    ];
+    let resp_pack = ResponsePacket::from(resp);
+    assert!(SecretkeeperError::deserialize_from_packet(resp_pack).is_err());
 }
 
 #[rdroidtest]

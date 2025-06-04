@@ -16,8 +16,10 @@
 
 //! Implementation of a Secretkeeper trusted application (TA).
 
+use crate::alloc::format;
 use crate::alloc::string::ToString;
 use crate::cipher;
+use crate::store::{request_malformed, unexpected_err};
 use crate::store::{KeyValueStore, PolicyGatedStorage};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -290,24 +292,27 @@ impl SecretkeeperTa {
         peer_cert_chain: &[u8],
     ) -> Result<Vec<u8>, SecretkeeperError> {
         let req_packet = RequestPacket::from_slice(req).map_err(|e| {
-            error!("Failed to get Request packet from bytes: {e:?}");
-            SecretkeeperError::RequestMalformed
+            let err_str = format!("Failed to get Request packet from bytes: {e:?}");
+            error!("{}", err_str);
+            request_malformed(err_str)
         })?;
         let rsp_packet =
-            match req_packet.opcode().map_err(|_| SecretkeeperError::RequestMalformed)? {
+            match req_packet.opcode().map_err(|_| request_malformed("Unknown opcode"))? {
                 Opcode::GetVersion => Self::get_version(req_packet)?,
                 Opcode::StoreSecret => self.store_secret(req_packet, peer_cert_chain)?,
                 Opcode::GetSecret => self.get_secret(req_packet, peer_cert_chain)?,
                 _ => panic!("Unknown operation.."),
             };
-        rsp_packet.to_vec().map_err(|_| SecretkeeperError::UnexpectedServerError)
+        rsp_packet
+            .to_vec()
+            .map_err(|_| unexpected_err("Unexpected server error while crafting response packet"))
     }
 
     fn get_version(req: RequestPacket) -> Result<ResponsePacket, SecretkeeperError> {
         // Deserialization really just verifies the structural integrity of the request such
         // as args being empty.
         let _req = GetVersionRequest::deserialize_from_packet(req)
-            .map_err(|_| SecretkeeperError::RequestMalformed)?;
+            .map_err(|_| request_malformed("Malformed get_version request packet"))?;
         let rsp = GetVersionResponse { version: CURRENT_VERSION };
         Ok(rsp.serialize_to_packet())
     }
@@ -318,7 +323,7 @@ impl SecretkeeperTa {
         peer_cert_chain: &[u8],
     ) -> Result<ResponsePacket, SecretkeeperError> {
         let request = StoreSecretRequest::deserialize_from_packet(request)
-            .map_err(|_| SecretkeeperError::RequestMalformed)?;
+            .map_err(|_| request_malformed("Malformed store_secret request packet"))?;
         self.store.store(request.id, request.secret, request.sealing_policy, peer_cert_chain)?;
         let response = StoreSecretResponse {};
         Ok(response.serialize_to_packet())
@@ -330,7 +335,7 @@ impl SecretkeeperTa {
         peer_cert_chain: &[u8],
     ) -> Result<ResponsePacket, SecretkeeperError> {
         let request = GetSecretRequest::deserialize_from_packet(request)
-            .map_err(|_| SecretkeeperError::RequestMalformed)?;
+            .map_err(|_| request_malformed("Malformed get_secret request packet"))?;
         let secret =
             self.store.get(&request.id, peer_cert_chain, request.updated_sealing_policy)?;
         let response = GetSecretResponse { secret };
