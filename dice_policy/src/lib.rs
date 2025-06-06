@@ -18,7 +18,7 @@
 //! verifier takes a policy and a DICE chain, and returns a boolean indicating whether the
 //! DICE chain meets the constraints set out on a policy.
 //!
-//! This forms the foundation of Dice Policy aware Authentication (DPA-Auth), where the server
+//! This forms the foundation of DICE Policy aware Authentication (DPA-Auth), where the server
 //! authenticates a client by comparing its dice chain against a set policy.
 //!
 //! Another use is "sealing", where clients can use an appropriately constructed dice policy to
@@ -36,7 +36,7 @@
 //! 2. Greater than or equal to: Useful for setting policies that seal
 //!    Anti-rollback protected entities (should be accessible to versions >= present).
 //!
-//! Dice Policy CDDL (keep in sync with DicePolicy.cddl):
+//! DICE Policy CDDL (keep in sync with DicePolicy.cddl):
 //!
 //! ```
 //! dicePolicy = [
@@ -74,7 +74,7 @@ use core::iter::zip;
 use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
 type Error = String;
 
-/// Version of the Dice policy spec
+/// Version of the DICE policy spec
 pub const DICE_POLICY_VERSION: u64 = 1;
 /// Identifier for `exactMatchConstraint` as per spec
 pub const EXACT_MATCH_CONSTRAINT: u16 = 1;
@@ -169,9 +169,9 @@ impl AsCborValue for NodeConstraints {
 /// This is Rust equivalent of `dicePolicy` in the CDDL above. Keep in sync!
 #[derive(Clone, Debug, PartialEq)]
 pub struct DicePolicy {
-    /// Dice policy version
+    /// DICE policy version
     pub version: u64,
-    /// List of `NodeConstraints`, one for each node of Dice chain.
+    /// List of `NodeConstraints`, one for each node of DICE chain.
     pub node_constraints_list: Box<[NodeConstraints]>,
 }
 
@@ -203,8 +203,8 @@ impl AsCborValue for DicePolicy {
 impl CborSerializable for DicePolicy {}
 
 impl DicePolicy {
-    /// Dice chain policy verifier - Compare the input dice chain against this Dice policy.
-    /// The method returns Ok() if the dice chain meets the constraints set in Dice policy,
+    /// DICE chain policy verifier - Compare the input dice chain against this DICE policy.
+    /// The method returns Ok() if the dice chain meets the constraints set in DICE policy,
     /// otherwise returns error in case of mismatch.
     /// TODO(b/291238565) Create a separate error module for DicePolicy mismatches.
     pub fn matches_dice_chain(&self, dice_chain: &[u8]) -> Result<(), Error> {
@@ -212,7 +212,7 @@ impl DicePolicy {
         check_is_explicit_key_dice_chain(&dice_chain)?;
         if dice_chain.len() != self.node_constraints_list.len() {
             return Err(format!(
-                "Dice chain size({}) does not match policy({})",
+                "DICE chain size({}) does not match policy({})",
                 dice_chain.len(),
                 self.node_constraints_list.len()
             ));
