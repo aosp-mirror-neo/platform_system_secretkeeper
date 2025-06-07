@@ -6,14 +6,14 @@ set out in the policy.
 
 ## Navigating this project
 
-This directory exports Rust crates for matching Dice Chains against Dice Policies as well building
-Dice Policies.
+This directory exports Rust crates for matching DICE Chains against DICE Policies as well building
+DICE Policies.
 
 1. [./building/](https://cs.android.com/android/platform/superproject/main/+/main:system/secretkeeper/dice_policy/building/src/lib.rs):
-   Supports constructing Dice Policies on a Dice chains, enabling various ways to specify the
+   Supports constructing DICE Policies on a DICE chains, enabling various ways to specify the
    constraints.
 1. [./src/](https://cs.android.com/android/platform/superproject/main/+/main:system/secretkeeper/dice_policy/src/lib.rs):
-   Supports matching Dice Chains against Dice Policies.
+   Supports matching DICE Chains against DICE Policies.
 
 ## DICE chain
 
