@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! This library supports constructing Dice Policies on a Dice chains, enabling various ways to
-//! specify the constraints. This adheres to the Dice Policy spec at DicePolicy.cddl & works with
+//! This library supports constructing DICE Policies on a DICE chains, enabling various ways to
+//! specify the constraints. This adheres to the DICE Policy spec at DicePolicy.cddl & works with
 //! the rust structs exported by libdice_policy.
 
 #![allow(missing_docs)] // Sadly needed due to use of enumn::N
@@ -43,7 +43,7 @@ const CONFIG_DESC: i64 = -4670548;
 const COMPONENT_NAME: i64 = -70002;
 const PATH_TO_COMPONENT_NAME: [i64; 2] = [CONFIG_DESC, COMPONENT_NAME];
 
-/// Constraint Types supported in Dice policy.
+/// Constraint Types supported in DICE policy.
 #[repr(u16)]
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, N)]
@@ -194,13 +194,13 @@ pub enum MissingAction {
 /// ExactMatch of the whole node.
 ///
 /// # Arguments
-/// `dice_chain`: The serialized CBOR encoded Dice chain, adhering to Explicit-key
+/// `dice_chain`: The serialized CBOR encoded DICE chain, adhering to Explicit-key
 /// DiceCertChain format. See definition at ExplicitKeyDiceCertChain.cddl
 ///
 /// `ConstraintSpec`: List of constraints to be applied on dice node.
 /// Each constraint is a ConstraintSpec object.
 ///
-/// Note: Dice node is treated as a nested structure (map or array) (& so the lookup is done in
+/// Note: DICE node is treated as a nested structure (map or array) (& so the lookup is done in
 /// that fashion).
 ///
 /// Examples of constraint_spec:

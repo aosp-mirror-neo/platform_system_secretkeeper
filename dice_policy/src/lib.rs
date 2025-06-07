@@ -18,7 +18,7 @@
 //! verifier takes a policy and a DICE chain, and returns a boolean indicating whether the
 //! DICE chain meets the constraints set out on a policy.
 //!
-//! This forms the foundation of Dice Policy aware Authentication (DPA-Auth), where the server
+//! This forms the foundation of DICE Policy aware Authentication (DPA-Auth), where the server
 //! authenticates a client by comparing its dice chain against a set policy.
 //!
 //! Another use is "sealing", where clients can use an appropriately constructed dice policy to
@@ -36,7 +36,7 @@
 //! 2. Greater than or equal to: Useful for setting policies that seal
 //!    Anti-rollback protected entities (should be accessible to versions >= present).
 //!
-//! Dice Policy CDDL (keep in sync with DicePolicy.cddl):
+//! DICE Policy CDDL (keep in sync with DicePolicy.cddl):
 //!
 //! ```
 //! dicePolicy = [
@@ -74,7 +74,7 @@ use core::iter::zip;
 use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem, CoseSign1};
 type Error = String;
 
-/// Version of the Dice policy spec
+/// Version of the DICE policy spec
 pub const DICE_POLICY_VERSION: u64 = 1;
 /// Identifier for `exactMatchConstraint` as per spec
 pub const EXACT_MATCH_CONSTRAINT: u16 = 1;
@@ -169,9 +169,9 @@ impl AsCborValue for NodeConstraints {
 /// This is Rust equivalent of `dicePolicy` in the CDDL above. Keep in sync!
 #[derive(Clone, Debug, PartialEq)]
 pub struct DicePolicy {
-    /// Dice policy version
+    /// DICE policy version
     pub version: u64,
-    /// List of `NodeConstraints`, one for each node of Dice chain.
+    /// List of `NodeConstraints`, one for each node of DICE chain.
     pub node_constraints_list: Box<[NodeConstraints]>,
 }
 
@@ -203,92 +203,81 @@ impl AsCborValue for DicePolicy {
 impl CborSerializable for DicePolicy {}
 
 impl DicePolicy {
-    /// Dice chain policy verifier - Compare the input dice chain against this Dice policy.
-    /// The method returns Ok() if the dice chain meets the constraints set in Dice policy,
-    /// otherwise returns error in case of mismatch.
+    /// Matches this DICE policy against a serialized ExplicitKeyDiceCertChain.
+    /// The method returns Ok() if the dice chain matches the constraints of this DICE policy,
+    /// otherwise returns an error.
+    ///
+    /// For ExplicitKeyDiceCertChain CDDL see
+    /// hardware/interfaces/security/authgraph/aidl/android/hardware/security/authgraph/ExplicitKeyDiceCertChain.cddl
+    ///
     /// TODO(b/291238565) Create a separate error module for DicePolicy mismatches.
-    pub fn matches_dice_chain(&self, dice_chain: &[u8]) -> Result<(), Error> {
-        let dice_chain = deserialize_cbor_array(dice_chain)?;
-        check_is_explicit_key_dice_chain(&dice_chain)?;
-        if dice_chain.len() != self.node_constraints_list.len() {
+    pub fn matches_dice_chain(&self, explicit_key_dice_chain: &[u8]) -> Result<(), Error> {
+        let explicit_key_dice_chain = deserialize_cbor_array(explicit_key_dice_chain)?;
+        check_is_explicit_key_dice_chain(&explicit_key_dice_chain)?;
+        if explicit_key_dice_chain.len() != self.node_constraints_list.len() {
             return Err(format!(
-                "Dice chain size({}) does not match policy({})",
-                dice_chain.len(),
+                "ExplicitKeyDiceCertChain size({}) does not match policy({})",
+                explicit_key_dice_chain.len(),
                 self.node_constraints_list.len()
             ));
         }
 
-        for (n, (dice_node, node_constraints)) in
-            zip(dice_chain, self.node_constraints_list.iter()).enumerate()
+        for (n, (node_constraints, node)) in
+            zip(self.node_constraints_list.iter(), explicit_key_dice_chain).enumerate()
         {
-            let dice_node_payload = if n <= 1 {
-                // 1st & 2nd dice node of Explicit-key DiceCertChain format are
-                // EXPLICIT_KEY_DICE_CERT_CHAIN_VERSION & DiceCertChainInitialPayload. The rest are
-                // DiceChainEntry which is a CoseSign1.
-                dice_node
-            } else {
-                payload_value_from_cose_sign(dice_node).map_err(|e| {
-                    format!(
-                        "Unable to get Cose payload at {n}th dice node(where \
-                    0th & 1st are version & UDS_Pub related respectively): {e}"
-                    )
-                })?
+            let node = match n {
+                0..=1 => node,
+                n => payload_value_from_cose_sign(node)
+                    .map_err(|e| format!("Unable to parse DiceChainEntry[{i}]: {e}", i = n - 2))?,
             };
-            check_constraints_on_node(node_constraints, &dice_node_payload).map_err(|e| {
-                format!(
-                    "Mismatch found at {n}th dice node(where 0th & 1st are \
-                version & UDS_Pub related respectively): {e}"
-                )
+            check_constraints_on_node(node_constraints, &node).map_err(|e| match n {
+                0 => format!("Mismatch at ExplicitKeyDiceCertChain version: {e}"),
+                1 => format!("Mismatch at DiceCertChainInitialPayload: {e}"),
+                n => format!("Mismatch at DiceChainEntry[{i}]: {e}", i = n - 2),
             })?;
         }
         Ok(())
     }
 }
 
-/// Matches a single DICE cert chain node against the corresponding node constraints of the DICE
-/// policy.
+/// Matches a single node against the corresponding node constraints of the DICE policy.
 pub fn check_constraints_on_node(
     node_constraints: &NodeConstraints,
-    dice_node: &Value,
+    node: &Value,
 ) -> Result<(), Error> {
     for constraint in node_constraints.0.iter() {
-        check_constraint_on_node(constraint, dice_node)?;
+        check_constraint_on_node(constraint, node)?;
     }
     Ok(())
 }
 
-fn check_constraint_on_node(constraint: &Constraint, dice_node: &Value) -> Result<(), Error> {
+fn check_constraint_on_node(constraint: &Constraint, node: &Value) -> Result<(), Error> {
     let Constraint(cons_type, path, value_in_constraint) = constraint;
-    let value_in_node = lookup_in_nested_container(dice_node, path)?
-        .ok_or(format!("Value not found for constraint_path {path:?})"))?;
+    let value_in_node = lookup_in_nested_container(node, path)?
+        .ok_or(format!("Value not found for constraint {path:?}"))?;
     match *cons_type {
         EXACT_MATCH_CONSTRAINT => {
             if value_in_node != *value_in_constraint {
                 return Err(format!(
-                    "Policy mismatch at constraint_path {path:?}). \
-                    Expected {value_in_constraint:?}; found {value_in_node:?}"
+                    "Constraint {path:?}): \
+                    expected {value_in_constraint:?}; found {value_in_node:?}"
                 ));
             }
         }
         GREATER_OR_EQUAL_CONSTRAINT => {
-            let value_in_node = value_in_node.as_integer().ok_or(format!(
-                "Mismatch type: expected a CBOR integer at constraint_path {path:?})"
-            ))?;
-            let value_min = value_in_constraint.as_integer().ok_or(format!(
-                "Mismatch type: expected a CBOR integer at constraint_path {path:?})"
-            ))?;
+            let value_min = value_in_constraint
+                .as_integer()
+                .ok_or(format!("Invalid constraint {path:?}: expected a CBOR integer"))?;
+            let value_in_node = value_in_node
+                .as_integer()
+                .ok_or(format!("Constraint {path:?}: expected a CBOR integer"))?;
             if value_in_node < value_min {
                 return Err(format!(
-                    "Policy mismatch. Expected >= {value_min:?}; \
-                    found {value_in_node:?} at constraint_path {path:?})"
+                    "Constraint {path:?}: expected >= {value_min:?}; found {value_in_node:?}"
                 ));
             }
         }
-        cons_type => {
-            return Err(format!(
-                "Unexpected constraint type {cons_type} at constraint_path {path:?})"
-            ))
-        }
+        cons_type => return Err(format!("Invalid constraint {path:?}: unknown type {cons_type}")),
     };
     Ok(())
 }
@@ -346,7 +335,7 @@ fn lookup_value_in_container<'a>(container: &'a Container<'a>, key: i64) -> Opti
     }
 }
 
-/// This library only works with Explicit-key DiceCertChain format. Further we require it to have
+/// This library only works with ExplicitKeyDiceCertChain format. Further we require it to have
 /// at least 1 DiceChainEntry. Note that this is a lightweight check so that we fail early for
 /// legacy chains.
 pub fn check_is_explicit_key_dice_chain(dice_chain: &[Value]) -> Result<(), Error> {
