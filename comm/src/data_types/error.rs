@@ -19,10 +19,13 @@
 // derive(N) generates a method that is missing a docstring.
 #![allow(missing_docs)]
 
+use crate::alloc::string::String;
+use crate::alloc::string::ToString;
+use crate::alloc::vec;
+use crate::alloc::vec::Vec;
 use crate::cbor_convert::value_to_integer;
 use crate::data_types::response::Response;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use ciborium::Value;
 use coset::CoseError;
 use enumn::N;
@@ -33,7 +36,7 @@ pub const ERROR_OK: u16 = 0; // All real errors must have non-zero error_codes
 /// Errors from Secretkeeper API. Keep in sync with `ErrorCode` defined for Secretkeeper HAL
 /// at SecretManagement.cddl
 #[derive(Clone, Copy, Debug, Eq, N, PartialEq)]
-pub enum SecretkeeperError {
+pub enum SecretkeeperErrorCode {
     // This is the Error code used if no other error codes explains the issue.
     UnexpectedServerError = 1,
     // Indicates the Request was malformed & hence couldn't be served.
@@ -46,22 +49,42 @@ pub enum SecretkeeperError {
     DicePolicyError = 5,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecretkeeperError {
+    pub code: SecretkeeperErrorCode,
+    pub msg: String,
+}
+
 // [`SecretkeeperError`] is a valid [`Response`] type.
 // For more information see `ErrorCode` in SecretManagement.cddl alongside ISecretkeeper.aidl
 impl Response for SecretkeeperError {
     fn new(response_cbor: Vec<Value>) -> Result<Box<Self>, Error> {
-        // TODO(b/291228655): This method currently discards the second value in response_cbor,
-        // which contains additional human-readable context in error. Include it!
         if response_cbor.is_empty() || response_cbor.len() > 2 {
             return Err(Error::ResponseMalformed);
         }
+
+        let estr = if response_cbor.len() == 2 {
+            response_cbor[1].as_text().ok_or(Error::ResponseMalformed)?
+        } else {
+            // Earlier implementation didn't include the error message in the packet.
+            // To maintain interoperability, we pass this message in case earlier version of
+            // secretkeeper TA is being used
+            "Missing error message"
+        };
+
         let error_code: u16 = value_to_integer(&response_cbor[0])?.try_into()?;
-        SecretkeeperError::n(error_code)
-            .map_or_else(|| Err(Error::ResponseMalformed), |sk_err| Ok(Box::new(sk_err)))
+        SecretkeeperErrorCode::n(error_code).map_or_else(
+            || Err(Error::ResponseMalformed),
+            |sk_err| Ok(Box::new(SecretkeeperError { code: sk_err, msg: estr.to_string() })),
+        )
+    }
+
+    fn result(&self) -> Vec<Value> {
+        vec![Value::Text(self.msg.clone())]
     }
 
     fn error_code(&self) -> u16 {
-        *self as u16
+        self.code as u16
     }
 }
 

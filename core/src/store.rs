@@ -17,6 +17,7 @@
 //! This library exposes [`PolicyGatedStorage`] and related traits that are useful for
 //! Secretkeeper service implementation.
 
+use crate::alloc::format;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -25,7 +26,7 @@ use coset::{AsCborValue, CborSerializable, CoseError, CoseError::UnexpectedItem}
 use dice_policy::chain_matches_policy;
 use log::error;
 use log::info;
-use secretkeeper_comm::data_types::error::{Error, SecretkeeperError};
+use secretkeeper_comm::data_types::error::{Error, SecretkeeperError, SecretkeeperErrorCode};
 use secretkeeper_comm::data_types::{Id, Secret};
 
 /// `PolicyGatedStorage` encapsulates the storage layer of Secretkeeper, which, in addition to
@@ -84,7 +85,7 @@ impl PolicyGatedStorage {
             Ok(..) => {
                 info!("Found an existing entry, access check succeeded, updating the secret");
             }
-            Err(SecretkeeperError::EntryNotFound) => {
+            Err(SecretkeeperError { code: SecretkeeperErrorCode::EntryNotFound, .. }) => {
                 info!("No existing entry, attempting to create a new entry..");
             }
             Err(e) => {
@@ -148,8 +149,9 @@ impl PolicyGatedStorage {
                 Ok(entry.secret)
             }
             None => {
-                info!("Entry for id: {:?} not found", id);
-                Err(SecretkeeperError::EntryNotFound)
+                let estr = format!("Entry for id: {id:?} not found");
+                info!("{estr}");
+                Err(SecretkeeperError { code: SecretkeeperErrorCode::EntryNotFound, msg: estr })
             }
         }
     }
@@ -166,27 +168,27 @@ impl PolicyGatedStorage {
 }
 
 #[inline]
-fn unexpected_err<E: core::fmt::Debug>(err: E) -> SecretkeeperError {
-    sk_err(SecretkeeperError::UnexpectedServerError, err)
+pub(crate) fn unexpected_err<E: core::fmt::Debug>(err_msg: E) -> SecretkeeperError {
+    sk_err(SecretkeeperErrorCode::UnexpectedServerError, err_msg)
 }
 
 #[inline]
-fn serial_err<E: core::fmt::Debug>(err: E) -> SecretkeeperError {
-    sk_err(SecretkeeperError::SerializationError, err)
+pub(crate) fn serial_err<E: core::fmt::Debug>(err_msg: E) -> SecretkeeperError {
+    sk_err(SecretkeeperErrorCode::SerializationError, err_msg)
 }
 
 #[inline]
-fn policy_err<E: core::fmt::Debug>(err: E) -> SecretkeeperError {
-    sk_err(SecretkeeperError::DicePolicyError, err)
+pub(crate) fn policy_err<E: core::fmt::Debug>(err_msg: E) -> SecretkeeperError {
+    sk_err(SecretkeeperErrorCode::DicePolicyError, err_msg)
 }
 #[inline]
-fn request_malformed<E: core::fmt::Debug>(err: E) -> SecretkeeperError {
-    sk_err(SecretkeeperError::RequestMalformed, err)
+pub(crate) fn request_malformed<E: core::fmt::Debug>(err_msg: E) -> SecretkeeperError {
+    sk_err(SecretkeeperErrorCode::RequestMalformed, err_msg)
 }
 
-fn sk_err<E: core::fmt::Debug>(sk_error: SecretkeeperError, err: E) -> SecretkeeperError {
-    error!("Got error {:?}, :{:?}", sk_error, err);
-    sk_error
+fn sk_err<E: core::fmt::Debug>(err_code: SecretkeeperErrorCode, err_msg: E) -> SecretkeeperError {
+    error!("Got error {:?}, :{:?}", err_code, err_msg);
+    SecretkeeperError { code: err_code, msg: format!("{:?}", err_msg) }
 }
 
 // Entry describes the `value` stored in the Key-Value store by PolicyGatedStorage.

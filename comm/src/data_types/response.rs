@@ -46,7 +46,9 @@ pub trait Response {
     /// See `ResponsePacket<Result>` in SecretManagement.cddl alongside ISecretkeeper.aidl
     fn new(response_cbor: Vec<Value>) -> Result<Box<Self>, Error>;
 
-    /// The result in the `Response`. By default this is empty, but [`Response`] structures like
+    /// The result in the `Response`. This function should return the body of the response packet,
+    /// without the status code (0 or error_code).
+    /// By default this is empty, but [`Response`] structures like
     /// `GetVersionResponse` must overwrite these to return the expected non-empty result.
     fn result(&self) -> Vec<Value> {
         Vec::new()
@@ -59,6 +61,7 @@ pub trait Response {
     }
 
     /// Serialize the response to a [`ResponsePacket`].
+    /// By default, this functions fetches the result and adds the error code to the response packet
     fn serialize_to_packet(&self) -> ResponsePacket {
         let mut res = self.result();
         res.insert(0, Value::from(self.error_code()));
