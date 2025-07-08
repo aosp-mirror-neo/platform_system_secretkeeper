@@ -57,21 +57,21 @@ impl PolicyGatedStorage {
     ///
     /// # Arguments
     /// * `id`: Unique identifier of the `secret`. A client is allowed to have multiple entries
-    ///    each with a distinct `id`. If an entry corresponding to `id` is already present AND
-    ///    `dice_chain` matches the (already present) `sealing_policy` -> update the
-    ///    corresponding [`Secret`] & its `sealing_policy`.
+    ///   each with a distinct `id`. If an entry corresponding to `id` is already present AND
+    ///   `dice_chain` matches the (already present) `sealing_policy` -> update the
+    ///   corresponding [`Secret`] & its `sealing_policy`.
     ///
     /// * `secret`: The [`Secret`] the client wishes to store.
     ///
     /// * `sealing_policy`: The DICE policy corresponding to the secret. Only clients with DICE
-    ///    chain that matches the sealing_policy are allowed to access Secret.
+    ///   chain that matches the sealing_policy are allowed to access Secret.
     ///
     /// * `dice_chain`: The serialized CBOR encoded DICE chain of the client, adhering to
-    ///    Android Profile for DICE.
-    ///    <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
-    ///    This method verifies that the dice_chain matches the provided sealing_policy but does
-    ///    not check that the DICE chain indeed belongs to the client.
-    ///    The caller must ensure that the DICE chain indeed belongs to client.
+    ///   Android Profile for DICE.
+    ///   <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
+    ///   This method verifies that the dice_chain matches the provided sealing_policy but does
+    ///   not check that the DICE chain indeed belongs to the client.
+    ///   The caller must ensure that the DICE chain indeed belongs to client.
     pub fn store(
         &mut self,
         id: Id,
@@ -111,15 +111,15 @@ impl PolicyGatedStorage {
     /// * `id`: Unique identifier of the secret.
     ///
     /// * `dice_chain`: The serialized CBOR encoded DICE chain of the client, adhering to
-    ///    Android Profile for DICE.
-    ///    <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
-    ///    This method verifies that the dice_chain matches the provided sealing_policy but does
-    ///    not check that the DICE chain indeed belongs to the client. The caller must ensure that
-    ///    the DICE chain indeed belongs to client.
+    ///   Android Profile for DICE.
+    ///   <https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md>
+    ///   This method verifies that the dice_chain matches the provided sealing_policy but does
+    ///   not check that the DICE chain indeed belongs to the client. The caller must ensure that
+    ///   the DICE chain indeed belongs to client.
     ///
     /// * `updated_sealing_policy`: The updated dice_policy corresponding to the [`Secret`].
-    ///    This is an optional parameter and can be used to replace the sealing_policy associated
-    ///    with the [`Secret`].
+    ///   This is an optional parameter and can be used to replace the sealing_policy associated
+    ///   with the [`Secret`].
     pub fn get(
         &mut self,
         id: &Id,
