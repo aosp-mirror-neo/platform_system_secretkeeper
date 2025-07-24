@@ -314,7 +314,7 @@ fn get_container_from_value(container: &Value) -> Result<Container, Error> {
 
 #[derive(Clone)]
 enum Container<'a> {
-    Map(Cow<'a, Vec<(Value, Value)>>),
+    Map(Cow<'a, [(Value, Value)]>),
     Array(&'a Vec<Value>),
 }
 
