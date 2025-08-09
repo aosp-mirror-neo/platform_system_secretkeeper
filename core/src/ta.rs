@@ -191,13 +191,13 @@ impl SecretkeeperTa {
                 (Some(req.code()), self.process_req(req))
             }
             Err(e) => {
-                error!("failed to decode CBOR request: {:?}", e);
+                error!("failed to decode CBOR request: {e:?}");
                 (None, PerformOpResponse::Failure(aidl_err!(InternalError, "CBOR decode failure")))
             }
         };
         trace!("<- TA: send response for {:?} rc {:?}", req_code, rsp.err_code());
         rsp.to_vec().unwrap_or_else(|e| {
-            error!("failed to encode CBOR response: {:?}", e);
+            error!("failed to encode CBOR response: {e:?}");
             invalid_cbor_rsp_data().to_vec()
         })
     }
@@ -229,7 +229,7 @@ impl SecretkeeperTa {
         match result {
             Ok(rsp) => PerformOpResponse::Success(rsp),
             Err(err) => {
-                warn!("failing {:?} request: {:?}", code, err);
+                warn!("failing {code:?} request: {err:?}");
                 PerformOpResponse::Failure(err)
             }
         }
@@ -293,7 +293,7 @@ impl SecretkeeperTa {
     ) -> Result<Vec<u8>, SecretkeeperError> {
         let req_packet = RequestPacket::from_slice(req).map_err(|e| {
             let err_str = format!("Failed to get Request packet from bytes: {e:?}");
-            error!("{}", err_str);
+            error!("{err_str}");
             request_malformed(err_str)
         })?;
         let rsp_packet =

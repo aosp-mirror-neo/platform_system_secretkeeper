@@ -305,7 +305,7 @@ fn get_container_from_value(container: &Value) -> Result<Container, Error> {
             .map_err(|e| format!("{e}"))?
             .into_map()
             .map(|m| Container::Map(Cow::Owned(m)))
-            .map_err(|e| format!("Expected a CBOR map: {:?}", e)),
+            .map_err(|e| format!("Expected a CBOR map: {e:?}")),
         Value::Map(map) => Ok(Container::Map(Cow::Borrowed(map))),
         Value::Array(array) => Ok(Container::Array(array)),
         _ => Err(format!("Expected an array/map/bytes {container:?}")),

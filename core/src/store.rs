@@ -89,7 +89,7 @@ impl PolicyGatedStorage {
                 info!("No existing entry, attempting to create a new entry..");
             }
             Err(e) => {
-                info!("There may have been an existing entry, but reading it failed {:?}", e);
+                info!("There may have been an existing entry, but reading it failed {e:?}");
                 return Err(e);
             }
         }
@@ -187,8 +187,8 @@ pub(crate) fn request_malformed<E: core::fmt::Debug>(err_msg: E) -> Secretkeeper
 }
 
 fn sk_err<E: core::fmt::Debug>(err_code: SecretkeeperErrorCode, err_msg: E) -> SecretkeeperError {
-    error!("Got error {:?}, :{:?}", err_code, err_msg);
-    SecretkeeperError { code: err_code, msg: format!("{:?}", err_msg) }
+    error!("Got error {err_code:?}, :{err_msg:?}");
+    SecretkeeperError { code: err_code, msg: format!("{err_msg:?}") }
 }
 
 // Entry describes the `value` stored in the Key-Value store by PolicyGatedStorage.
