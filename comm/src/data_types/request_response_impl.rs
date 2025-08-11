@@ -26,6 +26,7 @@ use crate::data_types::request::Request;
 use crate::data_types::response::Response;
 use crate::data_types::{Id, Secret};
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::vec;
 use alloc::vec::Vec;
 use ciborium::Value;
@@ -86,7 +87,7 @@ impl Response for GetVersionResponse {
 }
 
 /// Corresponds to `StoreSecretRequestPacket` in SecretManagement.cddl
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct StoreSecretRequest {
     // Unique identifier of the secret
     pub id: Id,
@@ -94,6 +95,15 @@ pub struct StoreSecretRequest {
     pub secret: Secret,
     // The DICE policy to control access to secret
     pub sealing_policy: Vec<u8>,
+}
+
+impl core::fmt::Debug for StoreSecretRequest {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StoreSecretRequest")
+            .field("id", &self.id)
+            .field("sealing_policy", &format!("[<redacted>]#{:?} bytes", self.sealing_policy.len()))
+            .finish()
+    }
 }
 
 impl Request for StoreSecretRequest {
@@ -130,12 +140,26 @@ impl Response for StoreSecretResponse {
 }
 
 /// Corresponds to `GetSecretRequestPacket` in SecretManagement.cddl
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct GetSecretRequest {
     // Unique identifier of the secret.
     pub id: Id,
     // The new dice_policy that will replace the existing sealing_policy of the secret.
     pub updated_sealing_policy: Option<Vec<u8>>,
+}
+impl core::fmt::Debug for GetSecretRequest {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GetSecretRequest")
+            .field("id", &self.id)
+            .field(
+                "updated_sealing_policy",
+                &self
+                    .updated_sealing_policy
+                    .as_ref()
+                    .map(|v| format!("[<redacted>]#{:?} bytes", v.len())),
+            )
+            .finish()
+    }
 }
 
 impl Request for GetSecretRequest {
