@@ -53,7 +53,7 @@ impl AgDevice {
         dice_artifacts: &OwnedDiceArtifactsWithExplicitKey,
         expected_peer_key: Option<CoseKey>,
     ) -> Result<Self, AgError> {
-        let cdi_leaf_priv = derive_cdi_leaf_priv(dice_artifacts)
+        let cdi_leaf_priv = derive_cdi_leaf_priv(None, dice_artifacts)
             .map_err(|_| ag_err!(InternalError, "Failed to get private key"))?;
         let identity = Identity {
             version: IDENTITY_VERSION,
