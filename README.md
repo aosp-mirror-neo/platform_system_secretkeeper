@@ -263,8 +263,7 @@ the value is correct using the VM reference DT that is included in the pvmfw
 [configuration data][pvmfwconfig].
 
 The [Android bootloader][androidbootloader] should request the public key from
-the Secretkeeper implementation at boot time and populate it in both the host
-Android DT and the VM Reference DT for pvmfw.
+the Secretkeeper implementation at boot time and populate it in Reference DT for pvmfw.
 
 The reference code for Secretkeeper defines a protocol that can be used by the
 bootloader to retrieve the public key; see
