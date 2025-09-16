@@ -10,4 +10,4 @@ license = "Apache-2.0"
 
 [dependencies]
 ciborium = { version = "0.2.2", default-features = false }
-coset = "0.3.7"
+coset = "0.4"
