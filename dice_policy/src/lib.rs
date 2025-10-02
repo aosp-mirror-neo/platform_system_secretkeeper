@@ -297,7 +297,7 @@ pub fn lookup_in_nested_container(
         .map_or_else(|| Ok(None), |val| lookup_in_nested_container(val, &constraint_path[1..]))
 }
 
-fn get_container_from_value(container: &Value) -> Result<Container, Error> {
+fn get_container_from_value(container: &Value) -> Result<Container<'_>, Error> {
     match container {
         // Value can be Map/Array/Encoded Map. Encoded Arrays are not yet supported (or required).
         // Note: Encoded Map is used for Configuration descriptor entry in DiceChainEntryPayload.
