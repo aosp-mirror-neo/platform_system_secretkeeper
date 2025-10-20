@@ -94,7 +94,7 @@ impl ConstraintSpec {
     fn expand(
         &self,
         node_payload: &Value,
-    ) -> impl Iterator<Item = Result<Cow<ConstraintSpec>, Error>> {
+    ) -> impl Iterator<Item = Result<Cow<'_, ConstraintSpec>, Error>> {
         if self.has_wildcard_entry() {
             expand_wildcard_entry(self, node_payload).map_or_else(
                 |e| Either::Left(once(Err(e))),

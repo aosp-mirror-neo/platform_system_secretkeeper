@@ -32,9 +32,15 @@ pub fn decrypt_message(
 ) -> Result<Vec<u8>, ApiError> {
     let nonce12 = Nonce12::try_from(&encrypt0.unprotected.iv[..])
         .map_err(|e| aidl_err!(InternalError, "nonce of unexpected size: {e:?}"))?;
-    encrypt0
-        .decrypt(external_aad, |ct, aad| aes_gcm.decrypt(key, ct, aad, &nonce12))
-        .map_err(|e| aidl_err!(InternalError, "failed to decrypt message: {e:?}"))
+    encrypt0.decrypt_ciphertext(
+        external_aad,
+        || aidl_err!(InternalError, "missing ciphertext"),
+        |ct, aad| {
+            aes_gcm
+                .decrypt(key, ct, aad, &nonce12)
+                .map_err(|e| aidl_err!(InternalError, "failed to decrypt message: {e:?}"))
+        },
+    )
 }
 
 /// Encrypt a message.
