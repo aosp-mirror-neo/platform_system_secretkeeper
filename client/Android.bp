@@ -68,7 +68,12 @@ rust_test {
     defaults: [
         "rdroidtest.defaults",
     ],
-    srcs: ["src/dice.rs"],
+    crate_root: "src/dice.rs",
+    srcs: [
+        "src/*.rs",
+        "testdata/compos_chain_legacy",
+    ],
+    use_expansive_default_srcs: false,
     rustlibs: [
         "libciborium",
         "libcoset",

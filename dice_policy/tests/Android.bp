@@ -9,7 +9,12 @@ rust_test {
     ],
     edition: "2021",
     lints: "android",
-    srcs: ["test.rs"],
+    crate_root: "test.rs",
+    srcs: [
+        "test.rs",
+        "testdata/compos_chain_explicit",
+    ],
+    use_expansive_default_srcs: false,
     test_suites: ["general-tests"],
     rustlibs: [
         "libdice_policy",
