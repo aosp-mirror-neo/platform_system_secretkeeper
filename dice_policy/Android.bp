@@ -29,6 +29,10 @@ rust_library {
     defaults: ["libdice_policy.defaults"],
     srcs: ["src/lib.rs"],
     host_supported: true,
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.sdv.*",
+    ],
     min_sdk_version: "35",
     rustlibs: [
         "libciborium",
