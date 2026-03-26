@@ -114,20 +114,11 @@ impl SecretkeeperTa {
         identity_curve: iana::EllipticCurve,
         max_sessions: usize,
     ) -> Result<Self, SkInternalError> {
-        // Create a per-boot-key for AuthGraph to use.
-        let aes_gcm = ag_impls.aes_gcm.box_clone();
-        let rng = ag_impls.rng.box_clone();
-        let per_boot_key = aes_gcm.generate_key(&mut *ag_impls.rng).map_err(|e| {
-            error!("Failed to generate per-boot key: {e:?}");
-            SkInternalError::UnexpectedError
-        })?;
-
-        let (identity_sign_key, mut pub_key) =
+        let (identity_sign_key, pub_key) =
             ag_impls.ecdsa.generate_key(identity_curve).map_err(|e| {
                 error!("Failed to generate {identity_curve:?} keypair: {e:?}");
                 SkInternalError::UnexpectedError
             })?;
-        pub_key.canonicalize_cose_key();
         let identity = Identity {
             version: IDENTITY_VERSION,
             cert_chain: CertChain {
@@ -137,17 +128,40 @@ impl SecretkeeperTa {
             },
             policy: None,
         };
-        let store = PolicyGatedStorage::init(storage_impl);
+
+        Self::new_with_identity(ag_impls, storage_impl, identity_sign_key, identity, max_sessions)
+    }
+
+    /// Manual constructor for desktop/testing environments
+    pub fn new_with_identity(
+        ag_impls: &mut CryptoTraitImpl,
+        storage_impl: Box<dyn KeyValueStore>,
+        identity_sign_key: EcSignKey,
+        identity: Identity,
+        max_sessions: usize,
+    ) -> Result<Self, SkInternalError> {
+        // Create a per-boot-key for AuthGraph to use.
+        let aes_gcm = ag_impls.aes_gcm.box_clone();
+        let rng = ag_impls.rng.box_clone();
+        let per_boot_key = aes_gcm.generate_key(&mut *ag_impls.rng).map_err(|e| {
+            error!("Failed to generate per-boot key: {e:?}");
+            SkInternalError::UnexpectedError
+        })?;
+
+        // The public key will be compared byte-by-byte, so call canonicalize
+        // to guarantee deterministic field ordering/encoding.
+        let mut identity_copy = identity.clone();
+        identity_copy.cert_chain.root_key.canonicalize_cose_key();
 
         Ok(Self {
             aes_gcm,
             rng,
             per_boot_key,
             identity_sign_key,
-            identity,
+            identity: identity_copy,
             max_sessions,
             session_artifacts: VecDeque::new(),
-            store,
+            store: PolicyGatedStorage::init(storage_impl),
         })
     }
 
